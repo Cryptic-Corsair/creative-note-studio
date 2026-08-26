@@ -11,7 +11,9 @@ import {
   Crosshair,
   Sparkles,
   X,
+  ChevronLeft,
 } from "lucide-react";
+import { Link } from "@tanstack/react-router";
 import type { Brush } from "@/lib/ink";
 import { brushCss, GRADIENTS, SOLID_COLORS, THEMES, type ThemeId } from "./palette";
 import { cn } from "@/lib/utils";
@@ -19,6 +21,8 @@ import { cn } from "@/lib/utils";
 export type Tool = "pen" | "eraser" | "lasso" | "hand";
 
 type Props = {
+  title: string;
+  onTitleChange: (t: string) => void;
   tool: Tool;
   setTool: (t: Tool) => void;
   brush: Brush;
@@ -85,11 +89,25 @@ export function Toolbar(p: Props) {
   return (
     <>
       <header className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between p-3 sm:p-5">
-        <div className="pointer-events-auto rounded-2xl bg-panel/80 px-4 py-2 shadow-float backdrop-blur-xl">
-          <h1 className="font-display text-base leading-tight tracking-tight text-panel-foreground">
-            Inkwell
-          </h1>
-          <p className="text-[11px] text-panel-foreground/50">infinite canvas notes</p>
+        <div className="pointer-events-auto flex items-center gap-1 rounded-2xl bg-panel/80 py-1.5 pl-1.5 pr-3 shadow-float backdrop-blur-xl">
+          <Link
+            to="/"
+            aria-label="Back to notes"
+            title="Back to notes"
+            className="grid h-9 w-9 place-items-center rounded-xl text-panel-foreground/70 transition-colors hover:bg-panel-accent hover:text-panel-foreground"
+          >
+            <ChevronLeft className="h-[18px] w-[18px]" />
+          </Link>
+          <div className="min-w-0">
+            <input
+              value={p.title}
+              onChange={(e) => p.onTitleChange(e.target.value)}
+              aria-label="Note title"
+              placeholder="Untitled note"
+              className="w-36 truncate border-none bg-transparent font-display text-sm leading-tight tracking-tight text-panel-foreground outline-none placeholder:text-panel-foreground/40 sm:w-56"
+            />
+            <p className="text-[11px] text-panel-foreground/45">Inkwell</p>
+          </div>
         </div>
         <div className="pointer-events-auto flex items-center gap-1 rounded-2xl bg-panel/80 p-1.5 shadow-float backdrop-blur-xl">
           <IconButton label="Undo" onClick={p.onUndo} disabled={!p.canUndo}>
