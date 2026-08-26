@@ -1,24 +1,28 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { Board } from "@/components/ink/Board";
 
-// No head() here: the home route inherits title/description/og/twitter from
-// __root.tsx, and ships no og:image so serve-time hosting can inject the
-// project's social preview (explicit og:image or latest screenshot).
 export const Route = createFileRoute("/")({
+  head: () => ({
+    meta: [
+      { title: "Inkwell — Infinite Canvas Notes" },
+      {
+        name: "description",
+        content:
+          "A fast, beautiful handwriting app: infinite canvas, pressure pen, eraser, lasso, rich colors and custom gradients.",
+      },
+      { property: "og:title", content: "Inkwell — Infinite Canvas Notes" },
+      {
+        property: "og:description",
+        content:
+          "Sketch and take notes on an infinite canvas with pen, eraser, lasso and custom gradient inks.",
+      },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
+    ],
+  }),
   component: Index,
 });
 
-// IMPORTANT: Replace this placeholder. See ./README.md for routing conventions.
 function Index() {
-  return (
-    <div
-      className="flex min-h-screen items-center justify-center"
-      style={{ backgroundColor: "#fcfbf8" }}
-    >
-      <img
-        data-lovable-blank-page-placeholder="REMOVE_THIS"
-        src="https://cdn.gpteng.co/blank-app-v1.svg"
-        alt="Your app will live here!"
-      />
-    </div>
-  );
+  return <Board />;
 }
