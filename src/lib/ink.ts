@@ -244,6 +244,46 @@ export function boundsOf(strokes: Stroke[]) {
   return { x0, y0, x1, y1 };
 }
 
+/**
+ * Memory-efficient point simplification using Ramer-Douglas-Peucker algorithm
+ * Reduces number of points while preserving stroke shape
+ */
+export function simplifyStroke(pts: Pt[], tolerance: number): Pt[] {
+  if (pts.length <= 2) return pts;
+
+  const sqDist = (p1: Pt, p2: Pt) => (p1.x - p2.x) ** 2 + (p1.y - p2.y) ** 2;
+
+  // Find perpendicular distance from point to line
+  const perpDist = (p: Pt, a: Pt, b: Pt) => {
+    const lenSq = sqDist(a, b);
+    if (lenSq === 0) return sqDist(p, a);
+    let t = ((p.x - a.x) * (b.x - a.x) + (p.y - a.y) * (b.y - a.y)) / lenSq;
+    t = clamp(t, 0, 1);
+    const proj = { x: a.x + t * (b.x - a.x), y: a.y + t * (b.y - a.y), p: 0 };
+    return sqDist(p, proj);
+  };
+
+  let maxDist = 0;
+  let index = 0;
+  const end = pts.length - 1;
+
+  for (let i = 1; i < end; i++) {
+    const dist = perpDist(pts[i]!, pts[0]!, pts[end]!);
+    if (dist > maxDist) {
+      maxDist = dist;
+      index = i;
+    }
+  }
+
+  if (maxDist > tolerance * tolerance) {
+    const left = simplifyStroke(pts.slice(0, index + 1), tolerance);
+    const right = simplifyStroke(pts.slice(index), tolerance);
+    return [...left.slice(0, -1), ...right];
+  } else {
+    return [pts[0]!, pts[end]!];
+  }
+}
+
 /** Snap the end of a stroke to a straight line / 15° increments. */
 export function straighten(pts: Pt[], snapAngle: boolean): Pt[] {
   if (pts.length < 2) return pts;

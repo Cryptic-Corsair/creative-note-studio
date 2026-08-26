@@ -15,8 +15,91 @@ export type Note = {
 
 const KEY = "inkwell.notes.v1";
 const LEGACY_KEY = "inkwell.board.v1";
+const BACKUP_KEY = "inkwell.backup.v1";
 
 export type NoteMeta = Omit<Note, "strokes" | "cam"> & { strokeCount: number };
+
+/**
+ * Export notes to JSON string for backup/download
+ */
+export function exportNotes(): string {
+  const notes = safeRead();
+  return JSON.stringify(
+    {
+      version: 1,
+      exportedAt: Date.now(),
+      notes,
+    },
+    null,
+    2,
+  );
+}
+
+/**
+ * Import notes from JSON string (merge with existing)
+ * Returns number of imported notes or throws on invalid data
+ */
+export function importNotes(json: string): number {
+  try {
+    const data = JSON.parse(json);
+    if (!data || typeof data !== "object" || !Array.isArray(data.notes)) {
+      throw new Error("Invalid import format");
+    }
+
+    const imported = data.notes as Note[];
+    const existing = safeRead();
+    const existingIds = new Set(existing.map((n) => n.id));
+
+    // Filter out duplicates and validate structure
+    const validImports = imported.filter(
+      (n) =>
+        n &&
+        typeof n.id === "string" &&
+        !existingIds.has(n.id) &&
+        Array.isArray(n.strokes),
+    );
+
+    if (validImports.length === 0) {
+      return 0;
+    }
+
+    writeAll([...validImports, ...existing]);
+    return validImports.length;
+  } catch (e) {
+    console.error("Failed to import notes:", e);
+    throw new Error("Invalid notes backup file");
+  }
+}
+
+/**
+ * Create a backup copy in localStorage as safeguard
+ */
+function createBackup(notes: Note[]) {
+  try {
+    localStorage.setItem(BACKUP_KEY, JSON.stringify(notes));
+  } catch {
+    // Backup failed, but don't block main operation
+    console.warn("Backup creation failed");
+  }
+}
+
+/**
+ * Restore from backup if primary storage is corrupted/empty
+ */
+function restoreFromBackup(): Note[] | null {
+  try {
+    const raw = localStorage.getItem(BACKUP_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Note[];
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch {
+    console.warn("Backup restoration failed");
+  }
+  return null;
+}
 
 function safeRead(): Note[] {
   if (typeof window === "undefined") return [];
@@ -26,8 +109,13 @@ function safeRead(): Note[] {
       const parsed = JSON.parse(raw) as Note[];
       if (Array.isArray(parsed)) return parsed;
     }
-  } catch {
-    /* corrupted */
+  } catch (e) {
+    console.warn("Primary storage corrupted, attempting backup restore:", e);
+    const backup = restoreFromBackup();
+    if (backup) {
+      writeAll(backup);
+      return backup;
+    }
   }
   // migrate the single-board store from the first version
   try {
@@ -57,8 +145,21 @@ function safeRead(): Note[] {
 function writeAll(notes: Note[]) {
   try {
     localStorage.setItem(KEY, JSON.stringify(notes));
-  } catch {
-    /* quota */
+    // Create async backup
+    setTimeout(() => createBackup(notes), 0);
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "QuotaExceededError") {
+      console.error("Storage quota exceeded. Consider deleting old notes.");
+      // Try to free space by removing backup
+      try {
+        localStorage.removeItem(BACKUP_KEY);
+        localStorage.setItem(KEY, JSON.stringify(notes));
+      } catch {
+        console.error("Unable to save even after clearing backup");
+      }
+    } else {
+      console.error("Failed to save notes:", e);
+    }
   }
   listeners.forEach((l) => l());
 }
