@@ -19,12 +19,9 @@ import {
 } from "@/lib/ink";
 import { Toolbar, type Tool } from "./Toolbar";
 import { THEMES, type ThemeId } from "./palette";
+import { getNote, updateNote } from "@/lib/notes";
 
-const STORE_KEY = "inkwell.board.v1";
-
-type Saved = { strokes: Stroke[]; cam: Camera; theme: ThemeId };
-
-export function Board() {
+export function Board({ noteId }: { noteId: string }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
@@ -53,6 +50,7 @@ export function Board() {
   const [brush, setBrush] = useState<Brush>({ kind: "solid", color: "#111318" });
   const [size, setSize] = useState(4);
   const [theme, setTheme] = useState<ThemeId>("graphite");
+  const [title, setTitle] = useState("Untitled note");
   const [zoom, setZoom] = useState(1);
   const [hasSelection, setHasSelection] = useState(false);
   const [canUndo, setCanUndo] = useState(false);
@@ -166,23 +164,20 @@ export function Board() {
 
   /* ---------------- persistence ---------------- */
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORE_KEY);
-      if (raw) {
-        const data = JSON.parse(raw) as Saved;
-        if (Array.isArray(data.strokes)) {
-          strokesRef.current = data.strokes;
-          historyRef.current = [data.strokes];
-        }
-        if (data.cam) camRef.current = data.cam;
-        if (data.theme && THEMES.some((t) => t.id === data.theme)) setTheme(data.theme);
-        setZoom(camRef.current.k);
-      }
-    } catch {
-      /* ignore corrupted store */
+    const note = getNote(noteId);
+    if (note) {
+      strokesRef.current = note.strokes ?? [];
+      historyRef.current = [note.strokes ?? []];
+      histIndexRef.current = 0;
+      camRef.current = note.cam ?? { x: 0, y: 0, k: 1 };
+      if (note.theme && THEMES.some((t) => t.id === note.theme)) setTheme(note.theme);
+      setTitle(note.title);
+      setZoom(camRef.current.k);
+      setCanUndo(false);
+      setCanRedo(false);
     }
     requestDraw();
-  }, [requestDraw]);
+  }, [noteId, requestDraw]);
 
   useEffect(() => {
     document.documentElement.dataset["theme"] = theme;
@@ -197,15 +192,24 @@ export function Board() {
     const t = setInterval(() => {
       if (!dirtyRef.current) return;
       dirtyRef.current = false;
-      try {
-        const payload: Saved = { strokes: strokesRef.current, cam: camRef.current, theme };
-        localStorage.setItem(STORE_KEY, JSON.stringify(payload));
-      } catch {
-        /* quota */
-      }
+      updateNote(noteId, { strokes: strokesRef.current, cam: camRef.current, theme });
     }, 1200);
     return () => clearInterval(t);
-  }, [theme]);
+  }, [theme, noteId]);
+
+  // flush on unmount / tab hide
+  useEffect(() => {
+    const flush = () => {
+      if (!dirtyRef.current) return;
+      dirtyRef.current = false;
+      updateNote(noteId, { strokes: strokesRef.current, cam: camRef.current, theme });
+    };
+    window.addEventListener("pagehide", flush);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      flush();
+    };
+  }, [noteId, theme]);
 
   /* ---------------- history ---------------- */
   const commit = useCallback(
@@ -567,6 +571,11 @@ export function Board() {
       </div>
 
       <Toolbar
+        title={title}
+        onTitleChange={(t) => {
+          setTitle(t);
+          updateNote(noteId, { title: t });
+        }}
         tool={tool}
         setTool={setTool}
         brush={brush}
