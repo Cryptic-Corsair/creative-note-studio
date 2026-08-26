@@ -362,7 +362,7 @@ export function Board() {
     const middle = e.button === 1;
     const activeTool = toolRef.current;
 
-    if (activeTool === "hand" || middle || e.pointerType === "touch" === false && e.shiftKey && activeTool === "pen" && false) {
+    if (activeTool === "hand" || middle || (e.pointerType === "mouse" && e.shiftKey)) {
       gestureRef.current = { mode: "pan", id: e.pointerId, lastX: x, lastY: y };
       return;
     }
