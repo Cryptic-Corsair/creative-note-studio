@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Plus, Search, Star, Copy, Trash2, PenLine, Sparkles } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Plus, Search, Star, Copy, Trash2, PenLine, Sparkles, Download, Upload } from "lucide-react";
 import {
   createNote,
   deleteNote,
@@ -9,11 +9,14 @@ import {
   getStrokes,
   subscribeNotes,
   updateNote,
+  exportNotes,
+  importNotes,
   type NoteMeta,
 } from "@/lib/notes";
 import { NoteThumb } from "@/components/ink/NoteThumb";
 import { THEMES, type ThemeId } from "@/components/ink/palette";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -54,6 +57,7 @@ function Home() {
   const [notes, setNotes] = useState<NoteMeta[] | null>(null);
   const [q, setQ] = useState("");
   const [theme, setTheme] = useState<ThemeId>("graphite");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(() => setNotes(listNotes()), []);
 
@@ -75,6 +79,53 @@ function Home() {
   const newNote = () => {
     const n = createNote("Untitled note", theme);
     navigate({ to: "/note/$id", params: { id: n.id } });
+  };
+
+  const handleExport = () => {
+    try {
+      const data = exportNotes();
+      const blob = new Blob([data], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `inkwell-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast.success("Notes exported successfully");
+    } catch (e) {
+      console.error("Export failed:", e);
+      toast.error("Failed to export notes");
+    }
+  };
+
+  const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const json = event.target?.result as string;
+        const count = importNotes(json);
+        refresh();
+        if (count > 0) {
+          toast.success(`Imported ${count} note${count === 1 ? "" : "s"}`);
+        } else {
+          toast.info("No new notes to import");
+        }
+      } catch (err) {
+        console.error("Import failed:", err);
+        toast.error(err instanceof Error ? err.message : "Failed to import notes");
+      }
+    };
+    reader.onerror = () => {
+      toast.error("Failed to read file");
+    };
+    reader.readAsText(file);
+    // Reset input so same file can be selected again
+    e.target.value = "";
   };
 
   return (
@@ -102,12 +153,38 @@ function Home() {
             />
           </label>
 
-          <button
-            onClick={newNote}
-            className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 active:scale-[0.98]"
-          >
-            <Plus className="h-4 w-4" /> New note
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={handleExport}
+              aria-label="Export notes"
+              title="Export all notes as backup"
+              className="inline-flex h-10 w-10 items-center justify-center gap-2 rounded-xl border border-border bg-card px-3 text-sm font-medium transition-opacity hover:opacity-90 active:scale-[0.98]"
+            >
+              <Download className="h-4 w-4" />
+            </button>
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              aria-label="Import notes"
+              title="Import notes from backup file"
+              className="inline-flex h-10 w-10 items-center justify-center gap-2 rounded-xl border border-border bg-card px-3 text-sm font-medium transition-opacity hover:opacity-90 active:scale-[0.98]"
+            >
+              <Upload className="h-4 w-4" />
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".json,application/json"
+              onChange={handleImport}
+              className="hidden"
+              aria-hidden="true"
+            />
+            <button
+              onClick={newNote}
+              className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 active:scale-[0.98]"
+            >
+              <Plus className="h-4 w-4" /> New note
+            </button>
+          </div>
         </div>
       </header>
 

@@ -7,6 +7,7 @@ import {
   MIN_ZOOM,
   pointNearStroke,
   shouldAddPoint,
+  simplifyStroke,
   strokeInLasso,
   strokePath,
   toWorld,
@@ -226,6 +227,24 @@ export function Board({ noteId }: { noteId: string }) {
       requestDraw();
     },
     [requestDraw, save],
+  );
+
+  // Auto-simplify complex strokes to improve performance
+  const simplifyAndCommit = useCallback(
+    (strokes: Stroke[]) => {
+      // Only simplify if stroke count is high (performance optimization)
+      const totalPoints = strokes.reduce((sum, s) => sum + s.pts.length, 0);
+      if (totalPoints > 5000) {
+        const simplified = strokes.map((s) => ({
+          ...s,
+          pts: simplifyStroke(s.pts, 0.8 / camRef.current.k),
+        }));
+        commit(simplified);
+      } else {
+        commit(strokes);
+      }
+    },
+    [commit],
   );
 
   const jump = useCallback(
@@ -587,7 +606,7 @@ export function Board({ noteId }: { noteId: string }) {
         zoom={zoom}
         canUndo={canUndo}
         canRedo={canRedo}
-        hasSelection={hasSelection}
+        selectionCount={hasSelection ? 1 : 0}
         onUndo={() => jump(-1)}
         onRedo={() => jump(1)}
         onDeleteSelection={deleteSelection}
