@@ -606,7 +606,7 @@ export function Board({ noteId }: { noteId: string }) {
         zoom={zoom}
         canUndo={canUndo}
         canRedo={canRedo}
-        hasSelection={hasSelection}
+        selectionCount={hasSelection ? 1 : 0}
         onUndo={() => jump(-1)}
         onRedo={() => jump(1)}
         onDeleteSelection={deleteSelection}

@@ -37,35 +37,35 @@ type Props = {
   setTool: (t: Tool) => void;
   brush: Brush;
   setBrush: (b: Brush) => void;
-  penStyle: PenStyle;
-  setPenStyle: (s: PenStyle) => void;
+  penStyle?: PenStyle;
+  setPenStyle?: (s: PenStyle) => void;
   size: number;
   setSize: (n: number) => void;
-  opacity: number;
-  setOpacity: (n: number) => void;
-  straight: boolean;
-  setStraight: (v: boolean) => void;
-  eraserMode: EraserMode;
-  setEraserMode: (m: EraserMode) => void;
-  eraserSize: number;
-  setEraserSize: (n: number) => void;
-  lassoMode: LassoMode;
-  setLassoMode: (m: LassoMode) => void;
+  opacity?: number;
+  setOpacity?: (n: number) => void;
+  straight?: boolean;
+  setStraight?: (v: boolean) => void;
+  eraserMode?: EraserMode;
+  setEraserMode?: (m: EraserMode) => void;
+  eraserSize?: number;
+  setEraserSize?: (n: number) => void;
+  lassoMode?: LassoMode;
+  setLassoMode?: (m: LassoMode) => void;
   theme: ThemeId;
   setTheme: (t: ThemeId) => void;
   zoom: number;
-  onZoom: (factor: number) => void;
+  onZoom?: (factor: number) => void;
   canUndo: boolean;
   canRedo: boolean;
   selectionCount: number;
   onUndo: () => void;
   onRedo: () => void;
   onDeleteSelection: () => void;
-  onDuplicateSelection: () => void;
-  onBringFront: () => void;
-  onSendBack: () => void;
-  onRestyleSelection: () => void;
-  onScaleSelection: (f: number) => void;
+  onDuplicateSelection?: () => void;
+  onBringFront?: () => void;
+  onSendBack?: () => void;
+  onRestyleSelection?: () => void;
+  onScaleSelection?: (f: number) => void;
   onResetView: () => void;
   onClear: () => void;
 };
@@ -281,25 +281,29 @@ export function Toolbar(p: Props) {
 
       {/* ---------- zoom cluster ---------- */}
       <div className="absolute bottom-4 right-3 z-20 flex flex-col items-center gap-1 rounded-2xl border border-panel-border/60 bg-panel/75 p-1.5 shadow-float backdrop-blur-2xl sm:right-4">
-        <button
-          aria-label="Zoom in"
-          title="Zoom in"
-          onClick={() => p.onZoom(1.2)}
-          className="grid h-8 w-8 place-items-center rounded-xl text-lg leading-none text-panel-foreground/65 transition-colors hover:bg-panel-accent hover:text-panel-foreground"
-        >
-          +
-        </button>
-        <span className="py-0.5 text-[10px] font-medium tabular-nums text-panel-foreground/55">
-          {Math.round(p.zoom * 100)}
-        </span>
-        <button
-          aria-label="Zoom out"
-          title="Zoom out"
-          onClick={() => p.onZoom(1 / 1.2)}
-          className="grid h-8 w-8 place-items-center rounded-xl text-lg leading-none text-panel-foreground/65 transition-colors hover:bg-panel-accent hover:text-panel-foreground"
-        >
-          −
-        </button>
+        {p.onZoom && (
+          <>
+            <button
+              aria-label="Zoom in"
+              title="Zoom in"
+              onClick={() => p.onZoom!(1.2)}
+              className="grid h-8 w-8 place-items-center rounded-xl text-lg leading-none text-panel-foreground/65 transition-colors hover:bg-panel-accent hover:text-panel-foreground"
+            >
+              +
+            </button>
+            <span className="py-0.5 text-[10px] font-medium tabular-nums text-panel-foreground/55">
+              {Math.round(p.zoom * 100)}
+            </span>
+            <button
+              aria-label="Zoom out"
+              title="Zoom out"
+              onClick={() => p.onZoom!(1 / 1.2)}
+              className="grid h-8 w-8 place-items-center rounded-xl text-lg leading-none text-panel-foreground/65 transition-colors hover:bg-panel-accent hover:text-panel-foreground"
+            >
+              −
+            </button>
+          </>
+        )}
         <span className="h-px w-5 bg-panel-border" />
         <IconButton label="Reset view" onClick={p.onResetView}>
           <IconTarget size={18} />
@@ -314,24 +318,36 @@ export function Toolbar(p: Props) {
               {p.selectionCount} selected
             </span>
             <span className="mx-0.5 h-5 w-px bg-panel-border" />
-            <IconButton label="Duplicate" onClick={p.onDuplicateSelection}>
-              <IconCopy size={18} />
-            </IconButton>
-            <IconButton label="Apply current ink" onClick={p.onRestyleSelection}>
-              <IconWand size={18} />
-            </IconButton>
-            <IconButton label="Shrink" onClick={() => p.onScaleSelection(1 / 1.15)}>
-              <IconScale size={18} className="rotate-90" />
-            </IconButton>
-            <IconButton label="Enlarge" onClick={() => p.onScaleSelection(1.15)}>
-              <IconScale size={18} />
-            </IconButton>
-            <IconButton label="Bring to front" onClick={p.onBringFront}>
-              <IconFront size={18} />
-            </IconButton>
-            <IconButton label="Send to back" onClick={p.onSendBack}>
-              <IconBack size={18} />
-            </IconButton>
+            {p.onDuplicateSelection && (
+              <IconButton label="Duplicate" onClick={p.onDuplicateSelection}>
+                <IconCopy size={18} />
+              </IconButton>
+            )}
+            {p.onRestyleSelection && (
+              <IconButton label="Apply current ink" onClick={p.onRestyleSelection}>
+                <IconWand size={18} />
+              </IconButton>
+            )}
+            {p.onScaleSelection && (
+              <>
+                <IconButton label="Shrink" onClick={() => p.onScaleSelection!(1 / 1.15)}>
+                  <IconScale size={18} className="rotate-90" />
+                </IconButton>
+                <IconButton label="Enlarge" onClick={() => p.onScaleSelection!(1.15)}>
+                  <IconScale size={18} />
+                </IconButton>
+              </>
+            )}
+            {p.onBringFront && (
+              <IconButton label="Bring to front" onClick={p.onBringFront}>
+                <IconFront size={18} />
+              </IconButton>
+            )}
+            {p.onSendBack && (
+              <IconButton label="Send to back" onClick={p.onSendBack}>
+                <IconBack size={18} />
+              </IconButton>
+            )}
             <IconButton label="Delete selection" danger onClick={p.onDeleteSelection}>
               <IconTrash size={18} />
             </IconButton>
@@ -350,8 +366,8 @@ export function Toolbar(p: Props) {
                   type="button"
                   title={`${s.name} — ${s.hint}`}
                   onClick={() => {
-                    p.setPenStyle(s.id);
-                    p.setOpacity(s.opacity);
+                    p.setPenStyle?.(s.id);
+                    p.setOpacity?.(s.opacity);
                   }}
                   className={cn(
                     "whitespace-nowrap rounded-xl px-3 py-2 text-xs font-medium transition-all",
@@ -364,23 +380,25 @@ export function Toolbar(p: Props) {
                 </button>
               ))}
               <span className="mx-0.5 h-5 w-px bg-panel-border" />
-              <IconButton
-                label="Straight line mode"
-                active={p.straight}
-                onClick={() => p.setStraight(!p.straight)}
-              >
-                <IconStraight size={18} />
-              </IconButton>
+              {p.setStraight && (
+                <IconButton
+                  label="Straight line mode"
+                  active={!!p.straight}
+                  onClick={() => p.setStraight!(!p.straight)}
+                >
+                  <IconStraight size={18} />
+                </IconButton>
+              )}
               <IconButton label="Ink settings" active={panel === "ink"} onClick={() => setPanel(panel === "ink" ? null : "ink")}>
                 <IconPalette size={18} />
               </IconButton>
             </>
           )}
 
-          {p.tool === "eraser" && (
+          {p.tool === "eraser" && p.setEraserMode && p.setEraserSize && (
             <div className="flex items-center gap-3 px-1">
               <Segmented
-                value={p.eraserMode}
+                value={p.eraserMode!}
                 onChange={p.setEraserMode}
                 options={[
                   { id: "stroke", label: "Whole stroke" },
@@ -390,7 +408,7 @@ export function Toolbar(p: Props) {
               <div className="w-36">
                 <Slider
                   label="Radius"
-                  value={p.eraserSize}
+                  value={p.eraserSize!}
                   min={4}
                   max={80}
                   step={1}
@@ -400,10 +418,10 @@ export function Toolbar(p: Props) {
             </div>
           )}
 
-          {p.tool === "lasso" && (
+          {p.tool === "lasso" && p.setLassoMode && (
             <div className="flex items-center gap-3 px-1">
               <Segmented
-                value={p.lassoMode}
+                value={p.lassoMode!}
                 onChange={p.setLassoMode}
                 options={[
                   { id: "free", label: "Freeform", icon: IconLasso },
@@ -519,15 +537,17 @@ export function Toolbar(p: Props) {
                 </div>
 
                 <Slider label="Thickness" value={p.size} min={1} max={40} step={0.5} onChange={p.setSize} />
-                <Slider
-                  label="Opacity"
-                  value={p.opacity * 100}
-                  min={5}
-                  max={100}
-                  step={1}
-                  suffix="%"
-                  onChange={(n) => p.setOpacity(n / 100)}
-                />
+                {p.opacity !== undefined && p.setOpacity && (
+                  <Slider
+                    label="Opacity"
+                    value={p.opacity * 100}
+                    min={5}
+                    max={100}
+                    step={1}
+                    suffix="%"
+                    onChange={(n) => p.setOpacity!(n / 100)}
+                  />
+                )}
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-2">
