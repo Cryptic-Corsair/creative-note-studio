@@ -66,7 +66,9 @@ function writeAll(notes: Note[]) {
 const listeners = new Set<() => void>();
 export function subscribeNotes(fn: () => void) {
   listeners.add(fn);
-  return () => listeners.delete(fn);
+  return () => {
+    listeners.delete(fn);
+  };
 }
 
 export function listNotes(): NoteMeta[] {
