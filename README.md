@@ -1,20 +1,18 @@
 # Notes Studio
 
-Build a note taking app like good notes , notability etc . Beautiful UI and themes , infinite canvas, pen , eraser, lasso , many colors to choose from , gradients , custom gradients . Keep it simple and optimized . No bugs or lags .
+A beautiful, fast note-taking app with an infinite canvas — pen, eraser, lasso selection, a rich color palette, and custom gradients, all wrapped in a clean, distraction-free UI.
 
-This project was built with [Lovable](https://lovable.dev).
+## Features
 
-## Build with Lovable
-
-Continue developing this project in the [Lovable editor](https://lovable.dev/projects/1a493fc8-8f15-43f6-989a-b197113a3d80).
-
-- **Ship faster**: describe what you want to build and Lovable handles the code.
-- **Stay in sync**: every change made in Lovable is committed straight to this repository.
-- **Full ownership**: this code is yours. Push to `main` on GitHub and your changes sync back into Lovable, ready for your next prompt.
+- **Infinite canvas** — sketch and write without running out of space
+- **Drawing tools** — pen, eraser, and lasso selection for moving and editing strokes
+- **Color & gradients** — a wide color palette plus custom gradient creation
+- **Themes** — switch between polished visual themes
+- **Optimized performance** — smooth, lag-free drawing at any zoom level
 
 ## Development
 
-Prefer working locally? You need Node.js and npm — [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating).
+You need Node.js and npm — [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating).
 
 ```sh
 git clone <this-repository-url>
