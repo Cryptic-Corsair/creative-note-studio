@@ -48,18 +48,20 @@ export function shouldAddPoint(last: Pt | undefined, p: Pt, min: number) {
 export function strokePath(pts: Pt[]) {
   const path = new Path2D();
   if (pts.length === 0) return path;
+  const first = pts[0]!;
   if (pts.length < 3) {
-    path.moveTo(pts[0].x, pts[0].y);
-    path.lineTo(pts[pts.length - 1].x + 0.01, pts[pts.length - 1].y + 0.01);
+    const l = pts[pts.length - 1]!;
+    path.moveTo(first.x, first.y);
+    path.lineTo(l.x + 0.01, l.y + 0.01);
     return path;
   }
-  path.moveTo(pts[0].x, pts[0].y);
+  path.moveTo(first.x, first.y);
   for (let i = 1; i < pts.length - 1; i++) {
-    const mx = (pts[i].x + pts[i + 1].x) / 2;
-    const my = (pts[i].y + pts[i + 1].y) / 2;
-    path.quadraticCurveTo(pts[i].x, pts[i].y, mx, my);
+    const a = pts[i]!;
+    const b = pts[i + 1]!;
+    path.quadraticCurveTo(a.x, a.y, (a.x + b.x) / 2, (a.y + b.y) / 2);
   }
-  const last = pts[pts.length - 1];
+  const last = pts[pts.length - 1]!;
   path.lineTo(last.x, last.y);
   return path;
 }
@@ -79,10 +81,10 @@ export function pointNearStroke(s: Stroke, x: number, y: number, r: number) {
   if (x < b.x0 - pad || x > b.x1 + pad || y < b.y0 - pad || y > b.y1 + pad) return false;
   const rr = (r + s.width / 2) ** 2;
   for (let i = 0; i < s.pts.length - 1; i++) {
-    if (distSqToSeg(x, y, s.pts[i], s.pts[i + 1]) <= rr) return true;
+    if (distSqToSeg(x, y, s.pts[i]!, s.pts[i + 1]!) <= rr) return true;
   }
   if (s.pts.length === 1) {
-    const p = s.pts[0];
+    const p = s.pts[0]!;
     return (p.x - x) ** 2 + (p.y - y) ** 2 <= rr;
   }
   return false;
@@ -102,10 +104,10 @@ function distSqToSeg(x: number, y: number, a: Pt, b: Pt) {
 export function pointInPolygon(poly: Pt[], x: number, y: number) {
   let inside = false;
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const xi = poly[i].x,
-      yi = poly[i].y,
-      xj = poly[j].x,
-      yj = poly[j].y;
+    const xi = poly[i]!.x,
+      yi = poly[i]!.y,
+      xj = poly[j]!.x,
+      yj = poly[j]!.y;
     if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
   }
   return inside;
