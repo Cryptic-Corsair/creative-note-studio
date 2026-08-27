@@ -11,7 +11,7 @@ import {
   type NoteMeta,
 } from "@/lib/notes";
 import { NoteThumb } from "@/components/ink/NoteThumb";
-import { THEMES, GRADIENTS, type ThemeId } from "@/components/ink/palette";
+import { THEMES, GRADIENTS, type ThemeId, type PaperPatternId } from "@/components/ink/palette";
 import {
   MarkArchive,
   MarkDuplicate,
@@ -70,6 +70,40 @@ const SORTS: { id: SortKey; label: string }[] = [
   { id: "recent", label: "Recent" },
   { id: "title", label: "Title" },
   { id: "size", label: "Strokes" },
+];
+
+const NOTE_TEMPLATES: {
+  title: string;
+  eyebrow: string;
+  description: string;
+  theme: ThemeId;
+  pattern: PaperPatternId;
+  accent: string;
+}[] = [
+  {
+    title: "Meeting note",
+    eyebrow: "Stay present",
+    description: "A ruled page for decisions, actions and loose thoughts.",
+    theme: "paper",
+    pattern: "ruled",
+    accent: "#e1b76b",
+  },
+  {
+    title: "Study map",
+    eyebrow: "Connect the dots",
+    description: "A graph canvas for concepts, sketches and working it out.",
+    theme: "sage",
+    pattern: "graph",
+    accent: "#78a998",
+  },
+  {
+    title: "Project sketch",
+    eyebrow: "See the system",
+    description: "An isometric surface for flows, plans and diagrams.",
+    theme: "midnight",
+    pattern: "isometric",
+    accent: "#78bce0",
+  },
 ];
 
 function Home() {
@@ -135,8 +169,8 @@ function Home() {
     [notes],
   );
 
-  const newNote = (t: ThemeId = theme) => {
-    const n = createNote("Untitled note", t);
+  const newNote = (t: ThemeId = theme, title = "Untitled note", pattern?: PaperPatternId) => {
+    const n = createNote(title, t, pattern);
     navigate({ to: "/note/$id", params: { id: n.id } });
   };
 
@@ -291,7 +325,7 @@ function Home() {
           </div>
         </section>
 
-        <section className="mb-10 grid gap-3 md:grid-cols-[1.35fr_1fr]">
+        <section className="mb-6 grid gap-3 md:grid-cols-[1.35fr_1fr]">
           {recentNote ? (
             <Link
               to="/note/$id"
@@ -347,6 +381,53 @@ function Home() {
                 <b className="mb-1 block text-sm text-foreground">↗</b>Shapes
               </div>
             </div>
+          </div>
+        </section>
+
+        <section className="mb-10 rounded-[30px] border border-border bg-card p-5 sm:p-6">
+          <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                Start with a shape
+              </p>
+              <h3 className="mt-1 font-display text-2xl tracking-tight">
+                A page for the way you work.
+              </h3>
+            </div>
+            <p className="max-w-xs text-sm text-muted-foreground">
+              Templates set the paper up front — the canvas stays entirely yours.
+            </p>
+          </div>
+          <div className="grid gap-3 md:grid-cols-3">
+            {NOTE_TEMPLATES.map((template) => (
+              <button
+                key={template.title}
+                onClick={() =>
+                  newNote(
+                    template.theme,
+                    `${template.title} — ${new Date().toLocaleDateString()}`,
+                    template.pattern,
+                  )
+                }
+                className="group relative min-h-44 overflow-hidden rounded-2xl border border-border p-4 text-left transition-all hover:-translate-y-1 hover:shadow-float"
+                style={{
+                  background: `linear-gradient(135deg, ${template.accent}26, transparent 64%)`,
+                }}
+              >
+                <span className="text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                  {template.eyebrow}
+                </span>
+                <span className="mt-6 block font-display text-xl tracking-tight">
+                  {template.title}
+                </span>
+                <span className="mt-1 block max-w-[14rem] text-xs leading-relaxed text-muted-foreground">
+                  {template.description}
+                </span>
+                <span className="absolute bottom-4 right-4 grid h-8 w-8 place-items-center rounded-full bg-background/80 text-primary opacity-0 transition-all group-hover:opacity-100">
+                  <MarkPlus className="h-4 w-4" />
+                </span>
+              </button>
+            ))}
           </div>
         </section>
 

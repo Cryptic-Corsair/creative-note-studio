@@ -1102,7 +1102,10 @@ export function Board({ noteId }: { noteId: string }) {
     liveRef.current = {
       id: uid(),
       pts: [{ x: world.x, y: world.y, p: pressure }],
-      width: sizeRef.current * (style === "highlighter" ? 1.5 : 0.75 + pressure * 0.5),
+      // Keep width as the user's selected base size. Pressure is applied while
+      // rendering each segment, rather than baking the first sample into every
+      // point in the stroke.
+      width: sizeRef.current * (style === "highlighter" ? 1.5 : 1),
       brush: brushRef.current,
       style,
       opacity: opacityRef.current,
@@ -1587,8 +1590,13 @@ export function Board({ noteId }: { noteId: string }) {
             octx.lineWidth = s.width;
           }
           octx.strokeStyle = brushStyle(octx, s);
-          const path = strokePath(s.pts);
-          octx.stroke(path);
+          if (s.style === "pen" || s.style === "brush") {
+            // Keep exported PNGs faithful to the pressure-aware on-canvas ink.
+            paintPressureStroke(octx, s);
+          } else {
+            const path = strokePath(s.pts);
+            octx.stroke(path);
+          }
           octx.restore();
         });
 
