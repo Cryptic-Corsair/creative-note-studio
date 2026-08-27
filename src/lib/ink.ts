@@ -1,6 +1,5 @@
 export type Brush =
-  | { kind: "solid"; color: string }
-  | { kind: "gradient"; from: string; to: string };
+  { kind: "solid"; color: string } | { kind: "gradient"; from: string; to: string };
 
 /** Pen personalities. */
 export type PenStyle = "ink" | "fountain" | "marker" | "pencil" | "highlighter";
@@ -170,13 +169,13 @@ export function splitStrokeByEraser(s: Stroke, x: number, y: number, r: number):
   for (const p of s.pts) {
     const hit = (p.x - x) ** 2 + (p.y - y) ** 2 <= rr;
     if (hit) {
-      if (run.length > 1) runs.push(run);
+      if (run.length) runs.push(run);
       run = [];
     } else {
       run.push(p);
     }
   }
-  if (run.length > 1) runs.push(run);
+  if (run.length) runs.push(run);
   if (runs.length === 1 && runs[0]!.length === s.pts.length) return [s];
   return runs.map((pts, i) => ({
     ...s,
@@ -209,7 +208,12 @@ export function translateStroke(s: Stroke, dx: number, dy: number): Stroke {
   return {
     ...s,
     pts,
-    bounds: { x0: s.bounds.x0 + dx, y0: s.bounds.y0 + dy, x1: s.bounds.x1 + dx, y1: s.bounds.y1 + dy },
+    bounds: {
+      x0: s.bounds.x0 + dx,
+      y0: s.bounds.y0 + dy,
+      x1: s.bounds.x1 + dx,
+      y1: s.bounds.y1 + dy,
+    },
   };
 }
 
