@@ -421,8 +421,8 @@ export function splitStrokeByEraserSegment(
     pts: pList,
     width: s.width,
     brush: s.brush,
-    style: s.style,
-    opacity: s.opacity,
+    ...(s.style !== undefined ? { style: s.style } : {}),
+    ...(s.opacity !== undefined ? { opacity: s.opacity } : {}),
     bounds: computeBounds(pList),
   }));
 }

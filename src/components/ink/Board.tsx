@@ -1255,8 +1255,8 @@ export function Board({ noteId }: { noteId: string }) {
     if (g.mode === "scale") {
       const b = g.initialBounds;
       const handle = g.handle;
-      const bw = b.w || 1;
-      const bh = b.h || 1;
+      const bw = b.x1 - b.x0 || 1;
+      const bh = b.y1 - b.y0 || 1;
       let scaleX = 1;
       let scaleY = 1;
 
