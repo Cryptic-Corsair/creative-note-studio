@@ -1,6 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Plus, Search, Star, Copy, Trash2, PenLine, Sparkles } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   createNote,
   deleteNote,
@@ -12,7 +11,21 @@ import {
   type NoteMeta,
 } from "@/lib/notes";
 import { NoteThumb } from "@/components/ink/NoteThumb";
-import { THEMES, type ThemeId } from "@/components/ink/palette";
+import { THEMES, GRADIENTS, type ThemeId } from "@/components/ink/palette";
+import {
+  MarkArchive,
+  MarkDuplicate,
+  MarkGrid,
+  MarkInkwell,
+  MarkNib,
+  MarkPlus,
+  MarkRows,
+  MarkSearch,
+  MarkSort,
+  MarkSpark,
+  MarkStar,
+  MarkTrash,
+} from "@/components/ink/marks";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/")({
@@ -22,7 +35,7 @@ export const Route = createFileRoute("/")({
       {
         name: "description",
         content:
-          "Inkwell is a fast handwriting app: infinite canvas, pressure pen, eraser, lasso, rich colors and custom gradient inks. Your notebook, all in one place.",
+          "Inkwell is a fast handwriting studio: infinite canvas, pressure pen, precision eraser, lasso, shapes, rich inks and custom gradients. Your whole notebook in one place.",
       },
       { property: "og:title", content: "Inkwell — Handwritten Notes on an Infinite Canvas" },
       {
@@ -49,11 +62,25 @@ const fmt = (t: number) => {
   return new Date(t).toLocaleDateString();
 };
 
+type SortKey = "recent" | "title" | "size";
+type ViewMode = "grid" | "rows";
+type Filter = "all" | "starred";
+
+const SORTS: { id: SortKey; label: string }[] = [
+  { id: "recent", label: "Recent" },
+  { id: "title", label: "Title" },
+  { id: "size", label: "Strokes" },
+];
+
 function Home() {
   const navigate = useNavigate();
+  const searchRef = useRef<HTMLInputElement>(null);
   const [notes, setNotes] = useState<NoteMeta[] | null>(null);
   const [q, setQ] = useState("");
   const [theme, setTheme] = useState<ThemeId>("graphite");
+  const [sort, setSort] = useState<SortKey>("recent");
+  const [view, setView] = useState<ViewMode>("grid");
+  const [filter, setFilter] = useState<Filter>("all");
 
   const refresh = useCallback(() => setNotes(listNotes()), []);
 
@@ -66,138 +93,293 @@ function Home() {
     document.documentElement.dataset["theme"] = theme;
   }, [theme]);
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = document.activeElement;
+      const typing = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement;
+      if (typing) return;
+      if (e.key === "/" || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k")) {
+        e.preventDefault();
+        searchRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   const filtered = useMemo(() => {
     if (!notes) return [];
     const s = q.trim().toLowerCase();
-    return s ? notes.filter((n) => n.title.toLowerCase().includes(s)) : notes;
-  }, [notes, q]);
+    let list = s ? notes.filter((n) => n.title.toLowerCase().includes(s)) : notes.slice();
+    if (filter === "starred") list = list.filter((n) => n.favorite);
+    list.sort((a, b) => {
+      if (a.favorite !== b.favorite) return a.favorite ? -1 : 1;
+      if (sort === "title") return a.title.localeCompare(b.title);
+      if (sort === "size") return b.strokeCount - a.strokeCount;
+      return b.updatedAt - a.updatedAt;
+    });
+    return list;
+  }, [notes, q, sort, filter]);
 
-  const newNote = () => {
-    const n = createNote("Untitled note", theme);
+  const stats = useMemo(() => {
+    const list = notes ?? [];
+    return {
+      count: list.length,
+      strokes: list.reduce((a, n) => a + n.strokeCount, 0),
+      starred: list.filter((n) => n.favorite).length,
+    };
+  }, [notes]);
+
+  const newNote = (t: ThemeId = theme) => {
+    const n = createNote("Untitled note", t);
     navigate({ to: "/note/$id", params: { id: n.id } });
   };
 
   return (
     <div className="min-h-dvh bg-background text-foreground">
-      <header className="sticky top-0 z-10 border-b border-border/60 bg-background/80 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-4 sm:px-6">
-          <div className="mr-auto flex items-center gap-2">
-            <span className="grid h-9 w-9 place-items-center rounded-xl bg-primary text-primary-foreground">
-              <PenLine className="h-[18px] w-[18px]" />
+      {/* ambient ink wash */}
+      <div
+        aria-hidden
+        className="pointer-events-none fixed inset-x-0 top-0 h-[520px] opacity-[0.16] blur-3xl"
+        style={{
+          background: `radial-gradient(60% 60% at 18% 0%, ${GRADIENTS[3]!.from}, transparent 70%), radial-gradient(50% 55% at 82% 8%, ${GRADIENTS[2]!.to}, transparent 70%)`,
+        }}
+      />
+
+      <header className="sticky top-0 z-20 border-b border-border/60 bg-background/70 backdrop-blur-xl">
+        <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3 sm:px-6">
+          <div className="mr-auto flex items-center gap-2.5">
+            <span className="grid h-10 w-10 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-float">
+              <MarkInkwell className="h-5 w-5" />
             </span>
             <div className="leading-tight">
-              <h1 className="font-display text-lg tracking-tight">Inkwell</h1>
-              <p className="text-[11px] text-muted-foreground">infinite canvas notes</p>
+              <h1 className="font-display text-[17px] tracking-tight">Inkwell</h1>
+              <p className="text-[11px] text-muted-foreground">infinite canvas studio</p>
             </div>
           </div>
 
           <label className="relative hidden sm:block">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <MarkSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <input
+              ref={searchRef}
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="Search notes"
+              placeholder="Search notebooks"
               aria-label="Search notes"
-              className="h-10 w-56 rounded-xl border border-border bg-card pl-9 pr-3 text-sm outline-none transition-colors focus:border-ring"
+              className="h-10 w-60 rounded-2xl border border-border bg-card pl-9 pr-12 text-sm outline-none transition-colors focus:border-ring"
             />
+            <kbd className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md border border-border px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+              /
+            </kbd>
           </label>
 
+          <div className="hidden items-center gap-0.5 rounded-2xl border border-border p-1 md:flex">
+            {(
+              [
+                ["grid", MarkGrid, "Grid view"],
+                ["rows", MarkRows, "List view"],
+              ] as const
+            ).map(([id, Icon, label]) => (
+              <button
+                key={id}
+                onClick={() => setView(id)}
+                aria-label={label}
+                aria-pressed={view === id}
+                className={cn(
+                  "grid h-8 w-8 place-items-center rounded-xl transition-colors",
+                  view === id
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                )}
+              >
+                <Icon className="h-4 w-4" />
+              </button>
+            ))}
+          </div>
+
           <button
-            onClick={newNote}
-            className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 active:scale-[0.98]"
+            onClick={() => newNote()}
+            className="inline-flex h-10 items-center gap-1.5 rounded-2xl bg-primary px-4 text-sm font-medium text-primary-foreground transition-transform hover:opacity-90 active:scale-[0.98]"
           >
-            <Plus className="h-4 w-4" /> New note
+            <MarkPlus className="h-4 w-4" />
+            <span className="hidden sm:inline">New note</span>
           </button>
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-4 pb-24 pt-8 sm:px-6">
-        <section className="mb-8 overflow-hidden rounded-3xl border border-border bg-card p-6 sm:p-10">
-          <h2 className="max-w-xl font-display text-2xl leading-tight tracking-tight sm:text-4xl">
-            Handwriting that feels like paper, on a canvas without edges.
-          </h2>
-          <p className="mt-3 max-w-xl text-sm text-muted-foreground sm:text-base">
-            Pressure-aware pen, precise eraser, lasso select and move, twelve inks, six gradients
-            and your own custom blends. Everything saves as you write.
-          </p>
-          <div className="mt-6 flex flex-wrap items-center gap-2">
-            <button
-              onClick={newNote}
-              className="inline-flex h-11 items-center gap-2 rounded-xl bg-primary px-5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
-            >
-              <Plus className="h-4 w-4" /> Start writing
-            </button>
-            <div className="flex items-center gap-1 rounded-xl border border-border p-1">
-              <Sparkles className="mx-2 h-4 w-4 text-muted-foreground" />
-              {THEMES.map((t) => (
+      <main className="relative mx-auto max-w-6xl px-4 pb-24 pt-8 sm:px-6">
+        {/* Hero */}
+        <section className="relative mb-10 overflow-hidden rounded-[28px] border border-border bg-card p-6 shadow-float sm:p-10">
+          <div
+            aria-hidden
+            className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full opacity-25 blur-2xl"
+            style={{
+              background: `linear-gradient(135deg, ${GRADIENTS[0]!.from}, ${GRADIENTS[3]!.to})`,
+            }}
+          />
+          <div className="relative grid gap-8 lg:grid-cols-[1.15fr_1fr] lg:items-center">
+            <div>
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background/60 px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                <MarkSpark className="h-3.5 w-3.5" /> pressure ink engine
+              </span>
+              <h2 className="mt-4 max-w-xl font-display text-3xl leading-[1.08] tracking-tight sm:text-5xl">
+                Handwriting that feels like paper,
+                <span className="text-muted-foreground"> on a canvas without edges.</span>
+              </h2>
+              <p className="mt-4 max-w-lg text-sm text-muted-foreground sm:text-base">
+                Pressure-aware pens, precision eraser, lasso transforms, shape snapping and custom
+                gradient inks. Everything saves as you write.
+              </p>
+              <div className="mt-6 flex flex-wrap items-center gap-2">
                 <button
-                  key={t.id}
-                  onClick={() => setTheme(t.id)}
-                  title={t.name}
-                  aria-label={`${t.name} theme`}
-                  className={cn(
-                    "h-7 w-7 rounded-lg border border-border transition-transform hover:scale-105",
-                    theme === t.id && "ring-2 ring-ring",
-                  )}
-                  data-theme={t.id}
-                  style={{ background: "var(--canvas-paper)" }}
-                />
-              ))}
+                  onClick={() => newNote()}
+                  className="inline-flex h-11 items-center gap-2 rounded-2xl bg-primary px-5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+                >
+                  <MarkNib className="h-4 w-4" /> Start writing
+                </button>
+                <div className="flex items-center gap-4 rounded-2xl border border-border px-4 py-2.5 text-xs text-muted-foreground">
+                  <Stat label="notes" value={stats.count} />
+                  <span className="h-4 w-px bg-border" />
+                  <Stat label="strokes" value={stats.strokes} />
+                  <span className="h-4 w-px bg-border" />
+                  <Stat label="starred" value={stats.starred} />
+                </div>
+              </div>
+            </div>
+
+            {/* Theme quick-start shelf */}
+            <div>
+              <p className="mb-3 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                Start on a paper
+              </p>
+              <div className="grid grid-cols-3 gap-2.5">
+                {THEMES.map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => setTheme(t.id)}
+                    onDoubleClick={() => newNote(t.id)}
+                    title={`${t.name} — ${t.desc}`}
+                    aria-pressed={theme === t.id}
+                    className={cn(
+                      "group overflow-hidden rounded-2xl border border-border text-left transition-transform hover:-translate-y-0.5",
+                      theme === t.id && "ring-2 ring-ring",
+                    )}
+                  >
+                    <span
+                      data-theme={t.id}
+                      className="block h-14 w-full"
+                      style={{
+                        background: "var(--canvas-paper)",
+                        backgroundImage:
+                          "radial-gradient(currentColor 0.7px, transparent 0.7px)",
+                        backgroundSize: "9px 9px",
+                        color: "var(--canvas-grid, transparent)",
+                      }}
+                    />
+                    <span className="block bg-background/60 px-2.5 py-1.5 text-[11px] font-medium">
+                      {t.name}
+                    </span>
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         </section>
 
+        {/* Mobile search */}
         <label className="relative mb-4 block sm:hidden">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <MarkSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Search notes"
+            placeholder="Search notebooks"
             aria-label="Search notes"
-            className="h-10 w-full rounded-xl border border-border bg-card pl-9 pr-3 text-sm outline-none focus:border-ring"
+            className="h-10 w-full rounded-2xl border border-border bg-card pl-9 pr-3 text-sm outline-none focus:border-ring"
           />
         </label>
 
-        <div className="mb-4 flex items-baseline justify-between">
-          <h3 className="font-display text-sm uppercase tracking-widest text-muted-foreground">
-            Your notes
+        {/* Library controls */}
+        <div className="mb-5 flex flex-wrap items-center gap-2">
+          <h3 className="mr-auto font-display text-sm uppercase tracking-[0.2em] text-muted-foreground">
+            Library
           </h3>
-          {notes && (
-            <span className="text-xs text-muted-foreground">
-              {notes.length} {notes.length === 1 ? "note" : "notes"}
-            </span>
-          )}
+
+          <div className="flex items-center gap-0.5 rounded-2xl border border-border p-1">
+            {(
+              [
+                ["all", "All"],
+                ["starred", "Starred"],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                onClick={() => setFilter(id)}
+                aria-pressed={filter === id}
+                className={cn(
+                  "h-8 rounded-xl px-3 text-xs font-medium transition-colors",
+                  filter === id
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-0.5 rounded-2xl border border-border p-1">
+            <MarkSort className="mx-1.5 h-4 w-4 text-muted-foreground" />
+            {SORTS.map((s) => (
+              <button
+                key={s.id}
+                onClick={() => setSort(s.id)}
+                aria-pressed={sort === s.id}
+                className={cn(
+                  "h-8 rounded-xl px-3 text-xs font-medium transition-colors",
+                  sort === s.id
+                    ? "bg-accent text-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         {notes === null ? (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {[0, 1, 2].map((i) => (
-              <div
-                key={i}
-                className="h-56 animate-pulse rounded-2xl border border-border bg-card"
-              />
+              <div key={i} className="h-60 animate-pulse rounded-3xl border border-border bg-card" />
             ))}
           </div>
         ) : filtered.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-border p-12 text-center">
+          <div className="grid place-items-center rounded-3xl border border-dashed border-border p-14 text-center">
+            <span className="mb-3 grid h-12 w-12 place-items-center rounded-2xl border border-border text-muted-foreground">
+              <MarkArchive className="h-5 w-5" />
+            </span>
             <p className="text-sm text-muted-foreground">
-              {q ? "No notes match that search." : "No notes yet — your canvas is waiting."}
+              {q
+                ? "No notebooks match that search."
+                : filter === "starred"
+                  ? "Nothing starred yet."
+                  : "No notes yet — your canvas is waiting."}
             </p>
-            {!q && (
+            {!q && filter === "all" && (
               <button
-                onClick={newNote}
-                className="mt-4 inline-flex h-10 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90"
+                onClick={() => newNote()}
+                className="mt-4 inline-flex h-10 items-center gap-2 rounded-2xl bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90"
               >
-                <Plus className="h-4 w-4" /> Create your first note
+                <MarkPlus className="h-4 w-4" /> Create your first note
               </button>
             )}
           </div>
-        ) : (
+        ) : view === "grid" ? (
           <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {filtered.map((n) => (
               <li
                 key={n.id}
-                className="group overflow-hidden rounded-2xl border border-border bg-card transition-shadow hover:shadow-float"
+                className="group relative overflow-hidden rounded-3xl border border-border bg-card transition-all hover:-translate-y-1 hover:shadow-float"
               >
                 <Link
                   to="/note/$id"
@@ -216,7 +398,14 @@ function Home() {
                     </div>
                   )}
                 </Link>
-                <div className="flex items-center gap-2 p-3">
+
+                {n.favorite && (
+                  <span className="absolute left-3 top-3 grid h-7 w-7 place-items-center rounded-full bg-background/85 text-primary backdrop-blur">
+                    <MarkStar className="h-3.5 w-3.5" filled />
+                  </span>
+                )}
+
+                <div className="flex items-center gap-1 p-3">
                   <Link
                     to="/note/$id"
                     params={{ id: n.id }}
@@ -227,35 +416,94 @@ function Home() {
                       {fmt(n.updatedAt)} · {n.strokeCount} strokes
                     </p>
                   </Link>
-                  <button
-                    aria-label={n.favorite ? "Unstar note" : "Star note"}
-                    onClick={() => updateNote(n.id, { favorite: !n.favorite }, false)}
-                    className="grid h-8 w-8 place-items-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
-                  >
-                    <Star className={cn("h-4 w-4", n.favorite && "fill-current text-primary")} />
-                  </button>
-                  <button
-                    aria-label="Duplicate note"
-                    onClick={() => duplicateNote(n.id)}
-                    className="grid h-8 w-8 place-items-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
-                  >
-                    <Copy className="h-4 w-4" />
-                  </button>
-                  <button
-                    aria-label="Delete note"
-                    onClick={() => {
-                      if (confirm(`Delete "${n.title || "Untitled note"}"?`)) deleteNote(n.id);
-                    }}
-                    className="grid h-8 w-8 place-items-center rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+                  <CardActions note={n} />
                 </div>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <ul className="overflow-hidden rounded-3xl border border-border bg-card">
+            {filtered.map((n, i) => (
+              <li
+                key={n.id}
+                className={cn(
+                  "group flex items-center gap-3 p-3 transition-colors hover:bg-accent/50",
+                  i > 0 && "border-t border-border",
+                )}
+              >
+                <Link
+                  to="/note/$id"
+                  params={{ id: n.id }}
+                  className="h-14 w-20 shrink-0 overflow-hidden rounded-xl border border-border"
+                >
+                  {n.strokeCount ? (
+                    <NoteThumb strokes={getStrokes(n.id)} theme={n.theme} />
+                  ) : (
+                    <span
+                      data-theme={n.theme}
+                      className="block h-full w-full"
+                      style={{ background: "var(--canvas-paper)" }}
+                    />
+                  )}
+                </Link>
+                <Link
+                  to="/note/$id"
+                  params={{ id: n.id }}
+                  className="mr-auto min-w-0 leading-tight"
+                >
+                  <p className="flex items-center gap-1.5 truncate text-sm font-medium">
+                    {n.title || "Untitled note"}
+                    {n.favorite && <MarkStar className="h-3.5 w-3.5 text-primary" filled />}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground">
+                    {fmt(n.updatedAt)} · {n.strokeCount} strokes ·{" "}
+                    {THEMES.find((t) => t.id === n.theme)?.name}
+                  </p>
+                </Link>
+                <CardActions note={n} />
               </li>
             ))}
           </ul>
         )}
       </main>
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: number }) {
+  return (
+    <span className="leading-tight">
+      <span className="block font-display text-sm text-foreground">{value}</span>
+      <span className="block text-[10px] uppercase tracking-widest">{label}</span>
+    </span>
+  );
+}
+
+function CardActions({ note }: { note: NoteMeta }) {
+  const btn =
+    "grid h-8 w-8 place-items-center rounded-xl text-muted-foreground transition-colors hover:bg-accent hover:text-foreground";
+  return (
+    <div className="flex items-center gap-0.5 opacity-70 transition-opacity group-hover:opacity-100">
+      <button
+        aria-label={note.favorite ? "Unstar note" : "Star note"}
+        onClick={() => updateNote(note.id, { favorite: !note.favorite }, false)}
+        className={cn(btn, note.favorite && "text-primary")}
+      >
+        <MarkStar className="h-4 w-4" filled={note.favorite} />
+      </button>
+      <button aria-label="Duplicate note" onClick={() => duplicateNote(note.id)} className={btn}>
+        <MarkDuplicate className="h-4 w-4" />
+      </button>
+      <button
+        aria-label="Delete note"
+        onClick={() => {
+          if (confirm(`Delete "${note.title || "Untitled note"}"? This cannot be undone.`))
+            deleteNote(note.id);
+        }}
+        className={cn(btn, "hover:text-destructive")}
+      >
+        <MarkTrash className="h-4 w-4" />
+      </button>
     </div>
   );
 }
