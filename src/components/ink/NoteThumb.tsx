@@ -47,8 +47,9 @@ export function NoteThumb({ strokes, theme }: { strokes: Stroke[]; theme: string
             points={s.pts.map((p) => `${p.x},${p.y}`).join(" ")}
             fill="none"
             stroke={s.brush.kind === "solid" ? s.brush.color : `url(#g-${s.id})`}
-            strokeWidth={s.width}
-            strokeLinecap="round"
+            strokeWidth={s.style === "highlighter" ? s.width * 1.5 : s.width}
+            strokeOpacity={s.opacity ?? (s.style === "highlighter" ? 0.45 : 1)}
+            strokeLinecap={s.style === "highlighter" ? "butt" : "round"}
             strokeLinejoin="round"
           />
         ))}

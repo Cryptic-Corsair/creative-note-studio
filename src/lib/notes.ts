@@ -1,6 +1,6 @@
 import type { Camera, Stroke } from "@/lib/ink";
 import { uid } from "@/lib/ink";
-import type { ThemeId } from "@/components/ink/palette";
+import type { ThemeId, PaperPatternId } from "@/components/ink/palette";
 
 export type Note = {
   id: string;
@@ -9,6 +9,7 @@ export type Note = {
   updatedAt: number;
   favorite: boolean;
   theme: ThemeId;
+  pattern?: PaperPatternId;
   cam: Camera;
   strokes: Stroke[];
 };

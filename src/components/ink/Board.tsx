@@ -3,27 +3,54 @@ import {
   brushStyle,
   clamp,
   computeBounds,
+  computeGroupBounds,
+  detectAndSnapShape,
+  flipStroke,
+  generateShape,
   MAX_ZOOM,
   MIN_ZOOM,
   pointNearStroke,
-  renderStroke,
-  shouldAddPoint,
-  splitStrokeByEraser,
+  rotateStroke,
   scaleStroke,
+  shouldAddPoint,
+  splitStrokeByCapsule,
+  splitStrokeByEraserSegment,
+  strokeIntersectsEraserSegment,
   strokeInLasso,
-  straighten,
+  strokeInRect,
+  strokePath,
+  toScreen,
   toWorld,
   translateStroke,
   uid,
   type Brush,
   type Camera,
-  type PenStyle,
+  type EraserPt,
   type Pt,
   type Stroke,
+  type StrokeStyle,
 } from "@/lib/ink";
-import { Toolbar, type EraserMode, type LassoMode, type Tool } from "./Toolbar";
-import { THEMES, type ThemeId } from "./palette";
+import {
+  Toolbar,
+  type Tool,
+  type EraserMode,
+  type EraserFilter,
+  type LassoMode,
+  type ShapeType,
+} from "./Toolbar";
+import { THEMES, type ThemeId, type PaperPatternId } from "./palette";
 import { getNote, updateNote } from "@/lib/notes";
+
+const pathCache = new WeakMap<Stroke, Path2D>();
+const getCachedPath = (s: Stroke, isLive: boolean) => {
+  if (isLive) return strokePath(s.pts);
+  let p = pathCache.get(s);
+  if (!p) {
+    p = strokePath(s.pts);
+    pathCache.set(s, p);
+  }
+  return p;
+};
 
 export function Board({ noteId }: { noteId: string }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -32,16 +59,39 @@ export function Board({ noteId }: { noteId: string }) {
   const strokesRef = useRef<Stroke[]>([]);
   const camRef = useRef<Camera>({ x: 0, y: 0, k: 1 });
   const liveRef = useRef<Stroke | null>(null);
+  const eraserLastPtRef = useRef<EraserPt | null>(null);
+  const shapeStartRef = useRef<Pt | null>(null);
   const lassoRef = useRef<Pt[] | null>(null);
+  const marqueeRef = useRef<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const selectionRef = useRef<Set<string>>(new Set());
   const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const mousePosRef = useRef<{ x: number; y: number } | null>(null);
+
+  // Gesture state machine
   const gestureRef = useRef<
     | { mode: "none" }
     | { mode: "draw"; id: number }
+    | { mode: "shape"; id: number; start: Pt }
     | { mode: "erase"; id: number }
     | { mode: "lasso"; id: number }
+    | { mode: "marquee"; id: number; start: Pt }
     | { mode: "pan"; id: number; lastX: number; lastY: number }
     | { mode: "move"; id: number; lastX: number; lastY: number }
+    | {
+        mode: "scale";
+        id: number;
+        handle: string;
+        initialBounds: { x0: number; y0: number; x1: number; y1: number; cx: number; cy: number };
+        initialStrokes: Stroke[];
+        startPt: Pt;
+      }
+    | {
+        mode: "rotate";
+        id: number;
+        center: { x: number; y: number };
+        initialStrokes: Stroke[];
+        startAngle: number;
+      }
     | { mode: "pinch"; startDist: number; startK: number; lastCx: number; lastCy: number }
   >({ mode: "none" });
 
@@ -50,46 +100,58 @@ export function Board({ noteId }: { noteId: string }) {
   const dirtyRef = useRef(false);
   const rafRef = useRef(0);
 
+  // Tool states
   const [tool, setTool] = useState<Tool>("pen");
+  const [penStyle, setPenStyle] = useState<StrokeStyle>("pen");
+  const [eraserMode, setEraserMode] = useState<EraserMode>("stroke");
+  const [eraserFilter, setEraserFilter] = useState<EraserFilter>("all");
+  const [eraserSize, setEraserSize] = useState(20);
+  const [lassoMode, setLassoMode] = useState<LassoMode>("freehand");
+  const [shapeType, setShapeType] = useState<ShapeType>("line");
+  const [autoSnapShape, setAutoSnapShape] = useState(false);
+
+  // Style states
   const [brush, setBrush] = useState<Brush>({ kind: "solid", color: "#111318" });
   const [size, setSize] = useState(4);
-  const [penStyle, setPenStyle] = useState<PenStyle>("ink");
   const [opacity, setOpacity] = useState(1);
-  const [straight, setStraight] = useState(false);
-  const [eraserMode, setEraserMode] = useState<EraserMode>("stroke");
-  const [eraserSize, setEraserSize] = useState(18);
-  const [lassoMode, setLassoMode] = useState<LassoMode>("free");
   const [theme, setTheme] = useState<ThemeId>("graphite");
+  const [pattern, setPattern] = useState<PaperPatternId>("dots");
   const [title, setTitle] = useState("Untitled note");
   const [zoom, setZoom] = useState(1);
+  const [isSaving, setIsSaving] = useState(false);
+  const [strokeCount, setStrokeCount] = useState(0);
+
+  // Selection & History states
   const [hasSelection, setHasSelection] = useState(false);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
 
+  // Sync refs for live event callbacks
   const toolRef = useRef(tool);
+  const penStyleRef = useRef(penStyle);
+  const eraserModeRef = useRef(eraserMode);
+  const eraserFilterRef = useRef(eraserFilter);
+  const eraserSizeRef = useRef(eraserSize);
+  const lassoModeRef = useRef(lassoMode);
+  const shapeTypeRef = useRef(shapeType);
+  const autoSnapShapeRef = useRef(autoSnapShape);
   const brushRef = useRef(brush);
   const sizeRef = useRef(size);
-  const penStyleRef = useRef(penStyle);
   const opacityRef = useRef(opacity);
-  const eraserModeRef = useRef(eraserMode);
-  const eraserSizeRef = useRef(eraserSize);
+
   toolRef.current = tool;
+  penStyleRef.current = penStyle;
+  eraserModeRef.current = eraserMode;
+  eraserFilterRef.current = eraserFilter;
+  eraserSizeRef.current = eraserSize;
+  lassoModeRef.current = lassoMode;
+  shapeTypeRef.current = shapeType;
+  autoSnapShapeRef.current = autoSnapShape;
   brushRef.current = brush;
   sizeRef.current = size;
-  penStyleRef.current = penStyle;
   opacityRef.current = opacity;
-  eraserModeRef.current = eraserMode;
-  eraserSizeRef.current = eraserSize;
 
-  /* ---------------- rendering ---------------- */
-  const requestDraw = useCallback(() => {
-    if (rafRef.current) return;
-    rafRef.current = requestAnimationFrame(() => {
-      rafRef.current = 0;
-      draw();
-    });
-  }, []);
-
+  /* ---------------- Rendering ---------------- */
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
@@ -105,26 +167,11 @@ export function Board({ noteId }: { noteId: string }) {
     const css = getComputedStyle(document.documentElement);
     const paper = css.getPropertyValue("--canvas-paper").trim() || "#ffffff";
     const dot = css.getPropertyValue("--canvas-dot").trim() || "#00000022";
-    const accent = css.getPropertyValue("--canvas-accent").trim() || "#3b5bdb";
+    const accent = css.getPropertyValue("--canvas-accent").trim() || "#6366f1";
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = paper;
     ctx.fillRect(0, 0, w, h);
-
-    // dot grid (adaptive)
-    let step = 28;
-    while (step * cam.k < 18) step *= 4;
-    while (step * cam.k > 90) step /= 2;
-    const sp = step * cam.k;
-    const ox = ((cam.x % sp) + sp) % sp;
-    const oy = ((cam.y % sp) + sp) % sp;
-    ctx.fillStyle = dot;
-    const r = clamp(cam.k, 0.6, 1.4);
-    for (let x = ox; x < w; x += sp) {
-      for (let y = oy; y < h; y += sp) {
-        ctx.fillRect(x - r / 2, y - r / 2, r, r);
-      }
-    }
 
     ctx.save();
     ctx.translate(cam.x, cam.y);
@@ -137,38 +184,224 @@ export function Board({ noteId }: { noteId: string }) {
     const viewX1 = viewX0 + w / cam.k;
     const viewY1 = viewY0 + h / cam.k;
 
-    const paint = (s: Stroke, selected: boolean) => {
+    // --- Paper Grid Patterns (High-Precision World Coordinates) ---
+    if (pattern === "dots") {
+      let step = 32;
+      while (step * cam.k < 18) step *= 2;
+      while (step * cam.k > 80) step /= 2;
+
+      const startX = Math.floor(viewX0 / step) * step;
+      const endX = Math.ceil(viewX1 / step) * step;
+      const startY = Math.floor(viewY0 / step) * step;
+      const endY = Math.ceil(viewY1 / step) * step;
+      const dotRadius = Math.max(0.75, 1.25 / cam.k);
+
+      ctx.save();
+      ctx.fillStyle = dot;
+      ctx.beginPath();
+      for (let gx = startX; gx <= endX; gx += step) {
+        for (let gy = startY; gy <= endY; gy += step) {
+          ctx.moveTo(gx + dotRadius, gy);
+          ctx.arc(gx, gy, dotRadius, 0, Math.PI * 2);
+        }
+      }
+      ctx.fill();
+      ctx.restore();
+    } else if (pattern === "graph") {
+      let step = 32;
+      while (step * cam.k < 16) step *= 2;
+      while (step * cam.k > 80) step /= 2;
+
+      const startX = Math.floor(viewX0 / step) * step;
+      const endX = Math.ceil(viewX1 / step) * step;
+      const startY = Math.floor(viewY0 / step) * step;
+      const endY = Math.ceil(viewY1 / step) * step;
+
+      ctx.save();
+      // Minor grid lines
+      ctx.strokeStyle = dot;
+      ctx.lineWidth = 0.8 / cam.k;
+      ctx.beginPath();
+      for (let gx = startX; gx <= endX; gx += step) {
+        ctx.moveTo(gx, viewY0);
+        ctx.lineTo(gx, viewY1);
+      }
+      for (let gy = startY; gy <= endY; gy += step) {
+        ctx.moveTo(viewX0, gy);
+        ctx.lineTo(viewX1, gy);
+      }
+      ctx.stroke();
+
+      // Major grid lines (every 4 intervals)
+      const majorStep = step * 4;
+      const mStartX = Math.floor(viewX0 / majorStep) * majorStep;
+      const mEndX = Math.ceil(viewX1 / majorStep) * majorStep;
+      const mStartY = Math.floor(viewY0 / majorStep) * majorStep;
+      const mEndY = Math.ceil(viewY1 / majorStep) * majorStep;
+
+      ctx.lineWidth = 1.6 / cam.k;
+      ctx.beginPath();
+      for (let gx = mStartX; gx <= mEndX; gx += majorStep) {
+        ctx.moveTo(gx, viewY0);
+        ctx.lineTo(gx, viewY1);
+      }
+      for (let gy = mStartY; gy <= mEndY; gy += majorStep) {
+        ctx.moveTo(viewX0, gy);
+        ctx.lineTo(viewX1, gy);
+      }
+      ctx.stroke();
+      ctx.restore();
+    } else if (pattern === "ruled") {
+      let step = 32;
+      while (step * cam.k < 18) step *= 2;
+      while (step * cam.k > 80) step /= 2;
+
+      const startY = Math.floor(viewY0 / step) * step;
+      const endY = Math.ceil(viewY1 / step) * step;
+
+      ctx.save();
+      ctx.strokeStyle = dot;
+      ctx.lineWidth = 1 / cam.k;
+      ctx.beginPath();
+      for (let gy = startY; gy <= endY; gy += step) {
+        ctx.moveTo(viewX0, gy);
+        ctx.lineTo(viewX1, gy);
+      }
+      ctx.stroke();
+
+      // Left vertical notebook margin line (classic red/coral accent)
+      ctx.strokeStyle = "rgba(239, 68, 68, 0.4)";
+      ctx.lineWidth = 1.5 / cam.k;
+      ctx.beginPath();
+      ctx.moveTo(80, viewY0);
+      ctx.lineTo(80, viewY1);
+      ctx.stroke();
+      ctx.restore();
+    } else if (pattern === "isometric") {
+      let step = 36;
+      while (step * cam.k < 20) step *= 2;
+      while (step * cam.k > 90) step /= 2;
+
+      const hStep = (step * Math.sqrt(3)) / 2;
+      const tan30 = Math.tan(Math.PI / 6); // 1 / sqrt(3) ~= 0.57735
+
+      ctx.save();
+      ctx.strokeStyle = dot;
+      ctx.lineWidth = 0.85 / cam.k;
+      ctx.beginPath();
+
+      // Horizontal lines
+      const startY = Math.floor(viewY0 / hStep) * hStep;
+      const endY = Math.ceil(viewY1 / hStep) * hStep;
+      for (let gy = startY; gy <= endY; gy += hStep) {
+        ctx.moveTo(viewX0, gy);
+        ctx.lineTo(viewX1, gy);
+      }
+
+      // +30° lines (y = tan30 * x + c => c = y - tan30 * x)
+      const cStep = hStep * 2;
+      const minC1 = viewY0 - tan30 * viewX1;
+      const maxC1 = viewY1 - tan30 * viewX0;
+      const startC1 = Math.floor(minC1 / cStep) * cStep;
+      const endC1 = Math.ceil(maxC1 / cStep) * cStep;
+      for (let c = startC1; c <= endC1; c += cStep) {
+        ctx.moveTo(viewX0, tan30 * viewX0 + c);
+        ctx.lineTo(viewX1, tan30 * viewX1 + c);
+      }
+
+      // -30° lines (y = -tan30 * x + c => c = y + tan30 * x)
+      const minC2 = viewY0 + tan30 * viewX0;
+      const maxC2 = viewY1 + tan30 * viewX1;
+      const startC2 = Math.floor(minC2 / cStep) * cStep;
+      const endC2 = Math.ceil(maxC2 / cStep) * cStep;
+      for (let c = startC2; c <= endC2; c += cStep) {
+        ctx.moveTo(viewX0, -tan30 * viewX0 + c);
+        ctx.lineTo(viewX1, -tan30 * viewX1 + c);
+      }
+
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    const paintStroke = (s: Stroke, selected: boolean, isLive: boolean = false) => {
       const b = s.bounds;
       const pad = s.width;
       if (b.x1 + pad < viewX0 || b.x0 - pad > viewX1 || b.y1 + pad < viewY0 || b.y0 - pad > viewY1)
         return;
-      renderStroke(ctx, s);
+
+      ctx.save();
+      const isHighlighter = s.style === "highlighter";
+      if (isHighlighter) {
+        ctx.globalCompositeOperation = "multiply";
+        ctx.globalAlpha = s.opacity ?? 0.4;
+        ctx.lineWidth = s.width * 1.5;
+        ctx.lineCap = "square";
+      } else {
+        ctx.globalAlpha = s.opacity ?? 1;
+        ctx.lineWidth = s.width;
+        ctx.lineCap = "round";
+      }
+
+      ctx.strokeStyle = brushStyle(ctx, s);
+
+      if (s.style === "calligraphy") {
+        ctx.save();
+        // Calligraphy ribbon drawing
+        const pts = s.pts;
+        if (pts.length > 1) {
+          ctx.beginPath();
+          const angle = Math.PI / 4; // 45 degree chisel nib
+          const nx = Math.cos(angle) * (s.width / 2);
+          const ny = Math.sin(angle) * (s.width / 2);
+          for (let i = 0; i < pts.length; i++) {
+            const p = pts[i]!;
+            if (i === 0) ctx.moveTo(p.x - nx, p.y - ny);
+            else ctx.lineTo(p.x - nx, p.y - ny);
+          }
+          for (let i = pts.length - 1; i >= 0; i--) {
+            const p = pts[i]!;
+            ctx.lineTo(p.x + nx, p.y + ny);
+          }
+          ctx.closePath();
+          ctx.fillStyle = brushStyle(ctx, s);
+          ctx.fill();
+        }
+        ctx.restore();
+      } else {
+        const path = getCachedPath(s, isLive);
+        ctx.stroke(path);
+      }
+
+      // Selection Highlight aura
       if (selected) {
         ctx.save();
-        ctx.globalAlpha = 0.35;
+        ctx.globalAlpha = 0.4;
         ctx.strokeStyle = accent;
         ctx.lineWidth = s.width + 6 / cam.k;
-        renderStroke(ctx, {
-          ...s,
-          brush: { kind: "solid", color: accent },
-          opacity: 0.35,
-          width: s.width + 6 / cam.k,
-        });
+        const path = getCachedPath(s, isLive);
+        ctx.stroke(path);
         ctx.restore();
       }
+      ctx.restore();
     };
 
     const sel = selectionRef.current;
-    for (const s of strokesRef.current) paint(s, sel.has(s.id));
-    const live = liveRef.current;
-    if (live) paint(live, false);
+    // Draw all completed strokes
+    for (const s of strokesRef.current) {
+      paintStroke(s, sel.has(s.id));
+    }
 
+    // Draw active in-progress stroke
+    const live = liveRef.current;
+    if (live) paintStroke(live, false, true);
+
+    // Draw Lasso Freehand Boundary
     const lasso = lassoRef.current;
     if (lasso && lasso.length > 1) {
       ctx.save();
       ctx.strokeStyle = accent;
       ctx.lineWidth = 1.5 / cam.k;
-      ctx.setLineDash([6 / cam.k, 5 / cam.k]);
+      ctx.setLineDash([5 / cam.k, 4 / cam.k]);
       ctx.beginPath();
       ctx.moveTo(lasso[0]!.x, lasso[0]!.y);
       for (const p of lasso) ctx.lineTo(p.x, p.y);
@@ -179,10 +412,119 @@ export function Board({ noteId }: { noteId: string }) {
       ctx.fill();
       ctx.restore();
     }
-    ctx.restore();
-  }, []);
 
-  /* ---------------- persistence ---------------- */
+    // Draw Marquee Box Boundary
+    const marquee = marqueeRef.current;
+    if (marquee) {
+      ctx.save();
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = 1.5 / cam.k;
+      ctx.setLineDash([5 / cam.k, 4 / cam.k]);
+      const minX = Math.min(marquee.x0, marquee.x1);
+      const minY = Math.min(marquee.y0, marquee.y1);
+      const bw = Math.abs(marquee.x1 - marquee.x0);
+      const bh = Math.abs(marquee.y1 - marquee.y0);
+      ctx.strokeRect(minX, minY, bw, bh);
+      ctx.globalAlpha = 0.08;
+      ctx.fillStyle = accent;
+      ctx.fillRect(minX, minY, bw, bh);
+      ctx.restore();
+    }
+
+    // Draw Selection Bounding Box & Transformation Handles
+    if (sel.size > 0) {
+      const selectedStrokes = strokesRef.current.filter((s) => sel.has(s.id));
+      if (selectedStrokes.length > 0) {
+        const bounds = computeGroupBounds(selectedStrokes);
+        const pad = 10 / cam.k;
+        const bx = bounds.x0 - pad;
+        const by = bounds.y0 - pad;
+        const bw = bounds.w + pad * 2;
+        const bh = bounds.h + pad * 2;
+
+        ctx.save();
+        ctx.strokeStyle = accent;
+        ctx.lineWidth = 1.5 / cam.k;
+        ctx.strokeRect(bx, by, bw, bh);
+
+        // Draw 8 Scale Handles
+        const handleSize = 7 / cam.k;
+        const handles = [
+          { x: bx, y: by }, // top-left
+          { x: bx + bw / 2, y: by }, // top-mid
+          { x: bx + bw, y: by }, // top-right
+          { x: bx + bw, y: by + bh / 2 }, // right-mid
+          { x: bx + bw, y: by + bh }, // bottom-right
+          { x: bx + bw / 2, y: by + bh }, // bottom-mid
+          { x: bx, y: by + bh }, // bottom-left
+          { x: bx, y: by + bh / 2 }, // left-mid
+        ];
+
+        ctx.fillStyle = paper;
+        ctx.strokeStyle = accent;
+        ctx.lineWidth = 1.5 / cam.k;
+        for (const hPt of handles) {
+          ctx.fillRect(hPt.x - handleSize / 2, hPt.y - handleSize / 2, handleSize, handleSize);
+          ctx.strokeRect(hPt.x - handleSize / 2, hPt.y - handleSize / 2, handleSize, handleSize);
+        }
+
+        // Draw Top Rotation Handle
+        const rotY = by - 24 / cam.k;
+        ctx.beginPath();
+        ctx.moveTo(bx + bw / 2, by);
+        ctx.lineTo(bx + bw / 2, rotY);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(bx + bw / 2, rotY, handleSize / 1.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.restore();
+      }
+    }
+
+    ctx.restore();
+
+    // Draw Live Eraser Ring & Precision Indicator (Screen Space)
+    if (toolRef.current === "eraser" && mousePosRef.current) {
+      const { x, y } = mousePosRef.current;
+      let erR = eraserSizeRef.current;
+      if (gestureRef.current.mode === "erase" && eraserLastPtRef.current) {
+        erR = eraserLastPtRef.current.r * cam.k;
+      }
+      ctx.save();
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(x, y, erR, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.fillStyle =
+        gestureRef.current.mode === "erase"
+          ? "rgba(168, 85, 247, 0.15)"
+          : "rgba(99, 102, 241, 0.08)";
+      ctx.fill();
+
+      // Precision center dot
+      ctx.beginPath();
+      ctx.arc(x, y, 1.5, 0, Math.PI * 2);
+      ctx.fillStyle = accent;
+      ctx.fill();
+
+      ctx.restore();
+    }
+  }, [pattern]);
+
+  const requestDraw = useCallback(() => {
+    if (rafRef.current) return;
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = 0;
+      draw();
+    });
+  }, [draw]);
+
+  /* ---------------- Persistence & Note Sync ---------------- */
   useEffect(() => {
     const note = getNote(noteId);
     if (note) {
@@ -191,8 +533,10 @@ export function Board({ noteId }: { noteId: string }) {
       histIndexRef.current = 0;
       camRef.current = note.cam ?? { x: 0, y: 0, k: 1 };
       if (note.theme && THEMES.some((t) => t.id === note.theme)) setTheme(note.theme);
+      if (note.pattern) setPattern(note.pattern);
       setTitle(note.title);
       setZoom(camRef.current.k);
+      setStrokeCount(strokesRef.current.length);
       setCanUndo(false);
       setCanRedo(false);
     }
@@ -206,35 +550,38 @@ export function Board({ noteId }: { noteId: string }) {
 
   const save = useCallback(() => {
     dirtyRef.current = true;
+    setIsSaving(true);
   }, []);
 
   useEffect(() => {
     const t = setInterval(() => {
       if (!dirtyRef.current) return;
       dirtyRef.current = false;
-      updateNote(noteId, { strokes: strokesRef.current, cam: camRef.current, theme });
-    }, 1200);
+      updateNote(noteId, { strokes: strokesRef.current, cam: camRef.current, theme, pattern });
+      setIsSaving(false);
+    }, 1000);
     return () => clearInterval(t);
-  }, [theme, noteId]);
+  }, [theme, pattern, noteId]);
 
-  // flush on unmount / tab hide
   useEffect(() => {
     const flush = () => {
       if (!dirtyRef.current) return;
       dirtyRef.current = false;
-      updateNote(noteId, { strokes: strokesRef.current, cam: camRef.current, theme });
+      updateNote(noteId, { strokes: strokesRef.current, cam: camRef.current, theme, pattern });
+      setIsSaving(false);
     };
     window.addEventListener("pagehide", flush);
     return () => {
       window.removeEventListener("pagehide", flush);
       flush();
     };
-  }, [noteId, theme]);
+  }, [noteId, theme, pattern]);
 
-  /* ---------------- history ---------------- */
+  /* ---------------- History Stack ---------------- */
   const commit = useCallback(
     (next: Stroke[]) => {
       strokesRef.current = next;
+      setStrokeCount(next.length);
       const h = historyRef.current.slice(0, histIndexRef.current + 1);
       h.push(next);
       if (h.length > 80) h.shift();
@@ -254,6 +601,7 @@ export function Board({ noteId }: { noteId: string }) {
       if (i === histIndexRef.current) return;
       histIndexRef.current = i;
       strokesRef.current = historyRef.current[i] ?? [];
+      setStrokeCount(strokesRef.current.length);
       selectionRef.current.clear();
       setHasSelection(false);
       setCanUndo(i > 0);
@@ -264,7 +612,7 @@ export function Board({ noteId }: { noteId: string }) {
     [requestDraw, save],
   );
 
-  /* ---------------- camera helpers ---------------- */
+  /* ---------------- Camera & Zoom Helpers ---------------- */
   const zoomAt = useCallback(
     (px: number, py: number, factor: number) => {
       const cam = camRef.current;
@@ -282,6 +630,44 @@ export function Board({ noteId }: { noteId: string }) {
     [requestDraw, save],
   );
 
+  const setZoomLevel = useCallback(
+    (targetK: number) => {
+      const canvas = canvasRef.current;
+      const w = canvas ? canvas.clientWidth : 800;
+      const h = canvas ? canvas.clientHeight : 600;
+      zoomAt(w / 2, h / 2, targetK / camRef.current.k);
+    },
+    [zoomAt],
+  );
+
+  const fitView = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || strokesRef.current.length === 0) {
+      camRef.current = { x: 0, y: 0, k: 1 };
+      setZoom(1);
+      requestDraw();
+      return;
+    }
+    const bounds = computeGroupBounds(strokesRef.current);
+    const cw = canvas.clientWidth;
+    const ch = canvas.clientHeight;
+    const pad = 60;
+    const fitK = clamp(
+      Math.min((cw - pad * 2) / bounds.w, (ch - pad * 2) / bounds.h),
+      MIN_ZOOM,
+      2.5,
+    );
+    camRef.current = {
+      k: fitK,
+      x: cw / 2 - bounds.cx * fitK,
+      y: ch / 2 - bounds.cy * fitK,
+    };
+    setZoom(fitK);
+    save();
+    requestDraw();
+  }, [requestDraw, save]);
+
+  /* ---------------- Wheel & Resize Listeners ---------------- */
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
@@ -310,6 +696,7 @@ export function Board({ noteId }: { noteId: string }) {
     return () => window.removeEventListener("resize", onResize);
   }, [requestDraw]);
 
+  /* ---------------- Selection Operations ---------------- */
   const deleteSelection = useCallback(() => {
     if (selectionRef.current.size === 0) return;
     const next = strokesRef.current.filter((s) => !selectionRef.current.has(s.id));
@@ -318,12 +705,124 @@ export function Board({ noteId }: { noteId: string }) {
     commit(next);
   }, [commit]);
 
+  const duplicateSelection = useCallback(() => {
+    const sel = selectionRef.current;
+    if (sel.size === 0) return;
+    const offset = 24 / camRef.current.k;
+    const cloned: Stroke[] = [];
+    const newSel = new Set<string>();
+
+    for (const s of strokesRef.current) {
+      if (sel.has(s.id)) {
+        const copy = translateStroke(s, offset, offset);
+        copy.id = uid();
+        cloned.push(copy);
+        newSel.add(copy.id);
+      }
+    }
+    selectionRef.current = newSel;
+    commit([...strokesRef.current, ...cloned]);
+  }, [commit]);
+
+  const recolorSelection = useCallback(() => {
+    const sel = selectionRef.current;
+    if (sel.size === 0) return;
+    const curBrush = brushRef.current;
+    const curOpacity = opacityRef.current;
+    const next = strokesRef.current.map((s) => {
+      if (sel.has(s.id)) {
+        return {
+          ...s,
+          brush: curBrush,
+          opacity: curOpacity,
+        };
+      }
+      return s;
+    });
+    commit(next);
+  }, [commit]);
+
+  const thickenSelection = useCallback(
+    (delta: number) => {
+      const sel = selectionRef.current;
+      if (sel.size === 0) return;
+      const next = strokesRef.current.map((s) => {
+        if (sel.has(s.id)) {
+          return {
+            ...s,
+            width: Math.max(1, s.width + delta),
+          };
+        }
+        return s;
+      });
+      commit(next);
+    },
+    [commit],
+  );
+
+  const flipSelection = useCallback(
+    (axis: "h" | "v") => {
+      const sel = selectionRef.current;
+      if (sel.size === 0) return;
+      const selected = strokesRef.current.filter((s) => sel.has(s.id));
+      const bounds = computeGroupBounds(selected);
+      const next = strokesRef.current.map((s) => {
+        if (sel.has(s.id)) {
+          return flipStroke(s, bounds.cx, bounds.cy, axis);
+        }
+        return s;
+      });
+      commit(next);
+    },
+    [commit],
+  );
+
+  const rotateSelection = useCallback(
+    (angleDeg: number) => {
+      const sel = selectionRef.current;
+      if (sel.size === 0) return;
+      const selected = strokesRef.current.filter((s) => sel.has(s.id));
+      const bounds = computeGroupBounds(selected);
+      const rad = (angleDeg * Math.PI) / 180;
+      const next = strokesRef.current.map((s) => {
+        if (sel.has(s.id)) {
+          return rotateStroke(s, { x: bounds.cx, y: bounds.cy }, rad);
+        }
+        return s;
+      });
+      commit(next);
+    },
+    [commit],
+  );
+
+  const deselect = useCallback(() => {
+    selectionRef.current.clear();
+    setHasSelection(false);
+    requestDraw();
+  }, [requestDraw]);
+
+  /* ---------------- Keyboard Shortcuts ---------------- */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       const mod = e.metaKey || e.ctrlKey;
+
       if (mod && e.key.toLowerCase() === "z") {
         e.preventDefault();
         jump(e.shiftKey ? 1 : -1);
+        return;
+      }
+      if (mod && e.key.toLowerCase() === "d") {
+        e.preventDefault();
+        duplicateSelection();
+        return;
+      }
+      if (mod && e.key.toLowerCase() === "a") {
+        e.preventDefault();
+        const allIds = new Set(strokesRef.current.map((s) => s.id));
+        selectionRef.current = allIds;
+        setHasSelection(allIds.size > 0);
+        requestDraw();
         return;
       }
       if (e.key === "Delete" || e.key === "Backspace") {
@@ -333,33 +832,73 @@ export function Board({ noteId }: { noteId: string }) {
         }
         return;
       }
-      if (e.target instanceof HTMLInputElement) return;
-      const map: Record<string, Tool> = { p: "pen", e: "eraser", l: "lasso", h: "hand", v: "hand" };
+      if (e.key === "Escape") {
+        deselect();
+        return;
+      }
+
+      const map: Record<string, Tool> = {
+        p: "pen",
+        e: "eraser",
+        l: "lasso",
+        h: "hand",
+        v: "hand",
+        s: "shape",
+      };
       const t = map[e.key.toLowerCase()];
       if (t) setTool(t);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [jump, deleteSelection]);
+  }, [jump, deleteSelection, duplicateSelection, deselect, requestDraw]);
 
-  /* ---------------- pointer input ---------------- */
+  /* ---------------- Pointer / Drawing State Machine ---------------- */
   const localPoint = (e: React.PointerEvent) => {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   };
 
-  const eraseAt = (wx: number, wy: number) => {
-    const r = eraserSizeRef.current / camRef.current.k;
-    const next =
-      eraserModeRef.current === "stroke"
-        ? strokesRef.current.filter((s) => !pointNearStroke(s, wx, wy, r))
-        : strokesRef.current.flatMap((s) => splitStrokeByEraser(s, wx, wy, r));
-    if (
-      next.length !== strokesRef.current.length ||
-      next.some((s, i) => s !== strokesRef.current[i])
-    ) {
-      strokesRef.current = next;
-      requestDraw();
+  const performEraseStep = (p0: EraserPt, p1: EraserPt): boolean => {
+    const mode = eraserModeRef.current;
+    const filter = eraserFilterRef.current;
+
+    if (mode === "stroke") {
+      const initialLen = strokesRef.current.length;
+      const kept = strokesRef.current.filter((s) => {
+        if (filter === "pen-only" && s.style === "highlighter") return true;
+        if (filter === "highlighter-only" && s.style !== "highlighter") return true;
+        return !strokeIntersectsEraserSegment(s, p0.x, p0.y, p0.r, p1.x, p1.y, p1.r);
+      });
+      if (kept.length !== initialLen) {
+        strokesRef.current = kept;
+        return true;
+      }
+      return false;
+    } else {
+      let changed = false;
+      const next: Stroke[] = [];
+      for (const s of strokesRef.current) {
+        if (
+          (filter === "pen-only" && s.style === "highlighter") ||
+          (filter === "highlighter-only" && s.style !== "highlighter")
+        ) {
+          next.push(s);
+          continue;
+        }
+
+        const splits = splitStrokeByEraserSegment(s, p0.x, p0.y, p0.r, p1.x, p1.y, p1.r);
+        if (splits.length !== 1 || splits[0] !== s) {
+          changed = true;
+          next.push(...splits);
+        } else {
+          next.push(s);
+        }
+      }
+      if (changed) {
+        strokesRef.current = next;
+        return true;
+      }
+      return false;
     }
   };
 
@@ -368,11 +907,12 @@ export function Board({ noteId }: { noteId: string }) {
     el.setPointerCapture(e.pointerId);
     const { x, y } = localPoint(e);
     pointersRef.current.set(e.pointerId, { x, y });
+    mousePosRef.current = { x, y };
 
     if (pointersRef.current.size === 2) {
-      // discard in-progress stroke, enter pinch
       liveRef.current = null;
       lassoRef.current = null;
+      marqueeRef.current = null;
       const pts = [...pointersRef.current.values()];
       const a = pts[0]!;
       const b = pts[1]!;
@@ -392,44 +932,139 @@ export function Board({ noteId }: { noteId: string }) {
     const middle = e.button === 1;
     const activeTool = toolRef.current;
 
+    // Hand / Pan navigation
     if (activeTool === "hand" || middle || (e.pointerType === "mouse" && e.shiftKey)) {
       gestureRef.current = { mode: "pan", id: e.pointerId, lastX: x, lastY: y };
       return;
     }
 
-    if (activeTool === "lasso") {
-      const sel = selectionRef.current;
-      if (sel.size) {
-        const hit = strokesRef.current.some(
-          (s) => sel.has(s.id) && pointNearStroke(s, world.x, world.y, 12 / camRef.current.k),
-        );
-        if (hit) {
+    // Selection gizmo hit testing
+    const sel = selectionRef.current;
+    if (sel.size > 0) {
+      const selected = strokesRef.current.filter((s) => sel.has(s.id));
+      if (selected.length > 0) {
+        const bounds = computeGroupBounds(selected);
+        const pad = 10 / camRef.current.k;
+        const bx = bounds.x0 - pad;
+        const by = bounds.y0 - pad;
+        const bw = bounds.w + pad * 2;
+        const bh = bounds.h + pad * 2;
+        const rotY = by - 24 / camRef.current.k;
+        const handleHitDist = 14 / camRef.current.k;
+
+        // Check rotation handle hit
+        if (Math.hypot(world.x - (bx + bw / 2), world.y - rotY) <= handleHitDist) {
+          gestureRef.current = {
+            mode: "rotate",
+            id: e.pointerId,
+            center: { x: bounds.cx, y: bounds.cy },
+            initialStrokes: selected,
+            startAngle: Math.atan2(world.y - bounds.cy, world.x - bounds.cx),
+          };
+          return;
+        }
+
+        // Check 8 scale handles
+        const handleList = [
+          { id: "nw", x: bx, y: by },
+          { id: "n", x: bx + bw / 2, y: by },
+          { id: "ne", x: bx + bw, y: by },
+          { id: "e", x: bx + bw, y: by + bh / 2 },
+          { id: "se", x: bx + bw, y: by + bh },
+          { id: "s", x: bx + bw / 2, y: by + bh },
+          { id: "sw", x: bx, y: by + bh },
+          { id: "w", x: bx, y: by + bh / 2 },
+        ];
+
+        for (const hnd of handleList) {
+          if (Math.hypot(world.x - hnd.x, world.y - hnd.y) <= handleHitDist) {
+            gestureRef.current = {
+              mode: "scale",
+              id: e.pointerId,
+              handle: hnd.id,
+              initialBounds: bounds,
+              initialStrokes: selected,
+              startPt: { x: world.x, y: world.y, p: 1 },
+            };
+            return;
+          }
+        }
+
+        // Check inside bounding box or on stroke -> move
+        if (
+          (world.x >= bx && world.x <= bx + bw && world.y >= by && world.y <= by + bh) ||
+          selected.some((s) => pointNearStroke(s, world.x, world.y, 16 / camRef.current.k))
+        ) {
           gestureRef.current = { mode: "move", id: e.pointerId, lastX: world.x, lastY: world.y };
           return;
         }
-        sel.clear();
-        setHasSelection(false);
       }
-      lassoRef.current = [{ x: world.x, y: world.y, p: 1 }];
-      gestureRef.current = { mode: "lasso", id: e.pointerId };
+
+      // Clicked outside selection: clear and proceed with active tool immediately
+      sel.clear();
+      setHasSelection(false);
+    }
+
+    // Lasso Selection tool
+    if (activeTool === "lasso") {
+      if (lassoModeRef.current === "freehand") {
+        lassoRef.current = [{ x: world.x, y: world.y, p: 1 }];
+        gestureRef.current = { mode: "lasso", id: e.pointerId };
+      } else {
+        marqueeRef.current = { x0: world.x, y0: world.y, x1: world.x, y1: world.y };
+        gestureRef.current = {
+          mode: "marquee",
+          id: e.pointerId,
+          start: { x: world.x, y: world.y, p: 1 },
+        };
+      }
       requestDraw();
       return;
     }
 
+    // Eraser Tool
     if (activeTool === "eraser") {
+      const pressure = e.pointerType === "pen" ? clamp(e.pressure || 0.5, 0.15, 1) : 0.7;
+      const baseR = eraserSizeRef.current / camRef.current.k;
+      const r = baseR * (e.pointerType === "pen" ? 0.6 + pressure * 0.6 : 1);
+      const startPt: EraserPt = { x: world.x, y: world.y, p: pressure, r };
+
+      eraserLastPtRef.current = startPt;
       gestureRef.current = { mode: "erase", id: e.pointerId };
-      eraseAt(world.x, world.y);
+
+      performEraseStep(startPt, startPt);
+      requestDraw();
       return;
     }
 
-    // pen
+    // Shape Tool
+    if (activeTool === "shape") {
+      shapeStartRef.current = { x: world.x, y: world.y, p: 1 };
+      gestureRef.current = {
+        mode: "shape",
+        id: e.pointerId,
+        start: { x: world.x, y: world.y, p: 1 },
+      };
+      liveRef.current = generateShape(
+        shapeTypeRef.current,
+        shapeStartRef.current,
+        shapeStartRef.current,
+        brushRef.current,
+        sizeRef.current,
+      );
+      requestDraw();
+      return;
+    }
+
+    // Pen Tool
     const pressure = e.pointerType === "pen" ? clamp(e.pressure || 0.5, 0.15, 1) : 0.7;
+    const style = penStyleRef.current;
     liveRef.current = {
       id: uid(),
       pts: [{ x: world.x, y: world.y, p: pressure }],
-      width: sizeRef.current * (0.75 + pressure * 0.5),
+      width: sizeRef.current * (style === "highlighter" ? 1.5 : 0.75 + pressure * 0.5),
       brush: brushRef.current,
-      style: penStyleRef.current,
+      style,
       opacity: opacityRef.current,
       bounds: { x0: world.x, y0: world.y, x1: world.x, y1: world.y },
     };
@@ -438,11 +1073,67 @@ export function Board({ noteId }: { noteId: string }) {
   };
 
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!pointersRef.current.has(e.pointerId)) return;
     const { x, y } = localPoint(e);
+    mousePosRef.current = { x, y };
+
+    const world = toWorld(camRef.current, x, y);
+
+    // Hover cursor feedback when selection is active and not mid-gesture
+    if (selectionRef.current.size > 0 && gestureRef.current.mode === "none" && wrapRef.current) {
+      const selStrokes = strokesRef.current.filter((s) => selectionRef.current.has(s.id));
+      if (selStrokes.length > 0) {
+        const bounds = computeGroupBounds(selStrokes);
+        const pad = 10 / camRef.current.k;
+        const bx = bounds.x0 - pad;
+        const by = bounds.y0 - pad;
+        const bw = bounds.w + pad * 2;
+        const bh = bounds.h + pad * 2;
+        const rotY = by - 24 / camRef.current.k;
+        const handleHitDist = 14 / camRef.current.k;
+
+        if (Math.hypot(world.x - (bx + bw / 2), world.y - rotY) <= handleHitDist) {
+          wrapRef.current.style.cursor = "grab";
+        } else if (
+          Math.hypot(world.x - bx, world.y - by) <= handleHitDist ||
+          Math.hypot(world.x - (bx + bw), world.y - (by + bh)) <= handleHitDist
+        ) {
+          wrapRef.current.style.cursor = "nwse-resize";
+        } else if (
+          Math.hypot(world.x - (bx + bw), world.y - by) <= handleHitDist ||
+          Math.hypot(world.x - bx, world.y - (by + bh)) <= handleHitDist
+        ) {
+          wrapRef.current.style.cursor = "nesw-resize";
+        } else if (
+          Math.hypot(world.x - (bx + bw / 2), world.y - by) <= handleHitDist ||
+          Math.hypot(world.x - (bx + bw / 2), world.y - (by + bh)) <= handleHitDist
+        ) {
+          wrapRef.current.style.cursor = "ns-resize";
+        } else if (
+          Math.hypot(world.x - bx, world.y - (by + bh / 2)) <= handleHitDist ||
+          Math.hypot(world.x - (bx + bw), world.y - (by + bh / 2)) <= handleHitDist
+        ) {
+          wrapRef.current.style.cursor = "ew-resize";
+        } else if (
+          (world.x >= bx && world.x <= bx + bw && world.y >= by && world.y <= by + bh) ||
+          selStrokes.some((s) => pointNearStroke(s, world.x, world.y, 16 / camRef.current.k))
+        ) {
+          wrapRef.current.style.cursor = "move";
+        } else {
+          wrapRef.current.style.cursor = cursor;
+        }
+      }
+    } else if (wrapRef.current && wrapRef.current.style.cursor !== cursor) {
+      wrapRef.current.style.cursor = cursor;
+    }
+
+    if (!pointersRef.current.has(e.pointerId)) {
+      if (toolRef.current === "eraser") requestDraw();
+      return;
+    }
     pointersRef.current.set(e.pointerId, { x, y });
     const g = gestureRef.current;
 
+    // Pinch Zoom / Pan
     if (g.mode === "pinch") {
       const pts = [...pointersRef.current.values()];
       const a = pts[0];
@@ -466,9 +1157,12 @@ export function Board({ noteId }: { noteId: string }) {
       return;
     }
 
-    if (g.mode === "none" || g.id !== e.pointerId) return;
-    const world = toWorld(camRef.current, x, y);
+    if (g.mode === "none" || g.id !== e.pointerId) {
+      if (toolRef.current === "eraser") requestDraw();
+      return;
+    }
 
+    // Pan
     if (g.mode === "pan") {
       const cam = camRef.current;
       camRef.current = { ...cam, x: cam.x + (x - g.lastX), y: cam.y + (y - g.lastY) };
@@ -478,25 +1172,35 @@ export function Board({ noteId }: { noteId: string }) {
       return;
     }
 
+    // Erase
     if (g.mode === "erase") {
-      eraseAt(world.x, world.y);
+      const events =
+        typeof e.nativeEvent.getCoalescedEvents === "function"
+          ? e.nativeEvent.getCoalescedEvents()
+          : [e.nativeEvent];
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      const baseR = eraserSizeRef.current / camRef.current.k;
+
+      for (const ev of events.length ? events : [e.nativeEvent]) {
+        const w = toWorld(camRef.current, ev.clientX - rect.left, ev.clientY - rect.top);
+        const pressure = e.pointerType === "pen" ? clamp(ev.pressure || 0.5, 0.15, 1) : 0.7;
+        const r = baseR * (e.pointerType === "pen" ? 0.6 + pressure * 0.6 : 1);
+        const pt: EraserPt = { x: w.x, y: w.y, p: pressure, r };
+
+        const lastPt = eraserLastPtRef.current ?? pt;
+        if (!eraserLastPtRef.current || shouldAddPoint(lastPt, pt, 0.8 / camRef.current.k)) {
+          eraserLastPtRef.current = pt;
+          performEraseStep(lastPt, pt);
+        }
+      }
+      requestDraw();
       return;
     }
 
+    // Lasso Freehand
     if (g.mode === "lasso") {
       const poly = lassoRef.current;
       if (!poly) return;
-      if (lassoMode === "rect") {
-        const start = poly[0]!;
-        lassoRef.current = [
-          start,
-          { x: world.x, y: start.y, p: 1 },
-          { x: world.x, y: world.y, p: 1 },
-          { x: start.x, y: world.y, p: 1 },
-        ];
-        requestDraw();
-        return;
-      }
       const last = poly[poly.length - 1];
       if (shouldAddPoint(last, { x: world.x, y: world.y, p: 1 }, 3 / camRef.current.k)) {
         poly.push({ x: world.x, y: world.y, p: 1 });
@@ -505,6 +1209,19 @@ export function Board({ noteId }: { noteId: string }) {
       return;
     }
 
+    // Lasso Marquee Box
+    if (g.mode === "marquee") {
+      marqueeRef.current = {
+        x0: g.start.x,
+        y0: g.start.y,
+        x1: world.x,
+        y1: world.y,
+      };
+      requestDraw();
+      return;
+    }
+
+    // Move Selection
     if (g.mode === "move") {
       const dx = world.x - g.lastX;
       const dy = world.y - g.lastY;
@@ -518,6 +1235,70 @@ export function Board({ noteId }: { noteId: string }) {
       return;
     }
 
+    // Rotate Selection
+    if (g.mode === "rotate") {
+      const currentAngle = Math.atan2(world.y - g.center.y, world.x - g.center.x);
+      const angleDelta = currentAngle - g.startAngle;
+      const sel = selectionRef.current;
+      strokesRef.current = strokesRef.current.map((s) => {
+        if (sel.has(s.id)) {
+          const initS = g.initialStrokes.find((is) => is.id === s.id);
+          if (initS) return rotateStroke(initS, g.center, angleDelta);
+        }
+        return s;
+      });
+      requestDraw();
+      return;
+    }
+
+    // Scale Selection
+    if (g.mode === "scale") {
+      const b = g.initialBounds;
+      const handle = g.handle;
+      const bw = b.x1 - b.x0 || 1;
+      const bh = b.y1 - b.y0 || 1;
+      let scaleX = 1;
+      let scaleY = 1;
+
+      if (handle.includes("e")) scaleX = (world.x - b.x0) / bw;
+      if (handle.includes("w")) scaleX = (b.x1 - world.x) / bw;
+      if (handle.includes("s")) scaleY = (world.y - b.y0) / bh;
+      if (handle.includes("n")) scaleY = (b.y1 - world.y) / bh;
+
+      if (Math.abs(scaleX) < 0.05) scaleX = Math.sign(scaleX || 1) * 0.05;
+      if (Math.abs(scaleY) < 0.05) scaleY = Math.sign(scaleY || 1) * 0.05;
+
+      const origin = {
+        x: handle.includes("w") ? b.x1 : handle.includes("e") ? b.x0 : b.cx,
+        y: handle.includes("n") ? b.y1 : handle.includes("s") ? b.y0 : b.cy,
+      };
+
+      const sel = selectionRef.current;
+      strokesRef.current = strokesRef.current.map((s) => {
+        if (sel.has(s.id)) {
+          const initS = g.initialStrokes.find((is) => is.id === s.id);
+          if (initS) return scaleStroke(initS, origin, scaleX, scaleY);
+        }
+        return s;
+      });
+      requestDraw();
+      return;
+    }
+
+    // Shape Drag
+    if (g.mode === "shape") {
+      liveRef.current = generateShape(
+        shapeTypeRef.current,
+        g.start,
+        { x: world.x, y: world.y, p: 1 },
+        brushRef.current,
+        sizeRef.current,
+      );
+      requestDraw();
+      return;
+    }
+
+    // Pen Draw
     if (g.mode === "draw") {
       const live = liveRef.current;
       if (!live) return;
@@ -558,11 +1339,23 @@ export function Board({ noteId }: { noteId: string }) {
     if (g.mode === "none" || g.id !== e.pointerId) return;
     gestureRef.current = { mode: "none" };
 
+    // Finalize Pen Drawing
     if (g.mode === "draw") {
-      const live = liveRef.current;
+      let live = liveRef.current;
       liveRef.current = null;
       if (live && live.pts.length > 0) {
-        if (straight) live.pts = straighten(live.pts, true);
+        // Check for Shape Auto-Snapping
+        if (autoSnapShapeRef.current && live.style === "pen") {
+          const snapped = detectAndSnapShape(live.pts);
+          if (snapped) {
+            live = {
+              ...live,
+              pts: snapped.pts,
+              style: snapped.type,
+              bounds: computeBounds(snapped.pts),
+            };
+          }
+        }
         live.bounds = computeBounds(live.pts);
         commit([...strokesRef.current, live]);
       } else {
@@ -570,36 +1363,220 @@ export function Board({ noteId }: { noteId: string }) {
       }
       return;
     }
-    if (g.mode === "erase" || g.mode === "move") {
+
+    // Finalize Shape
+    if (g.mode === "shape") {
+      const live = liveRef.current;
+      liveRef.current = null;
+      if (live && live.pts.length > 0) {
+        commit([...strokesRef.current, live]);
+      } else {
+        requestDraw();
+      }
+      return;
+    }
+
+    // Finalize Erase
+    if (g.mode === "erase") {
+      eraserLastPtRef.current = null;
+      commit([...strokesRef.current]);
+      requestDraw();
+      return;
+    }
+
+    // Finalize Move, Scale, Rotate
+    if (g.mode === "move" || g.mode === "scale" || g.mode === "rotate") {
       commit([...strokesRef.current]);
       return;
     }
+
+    // Finalize Freehand Lasso
     if (g.mode === "lasso") {
       const poly = lassoRef.current;
       lassoRef.current = null;
       const sel = selectionRef.current;
       sel.clear();
       if (poly && poly.length > 2) {
-        for (const s of strokesRef.current) if (strokeInLasso(s, poly)) sel.add(s.id);
+        for (const s of strokesRef.current) {
+          if (strokeInLasso(s, poly)) sel.add(s.id);
+        }
+      } else if (poly && poly.length > 0) {
+        // Tap to select single stroke
+        const tap = poly[0]!;
+        const hit = [...strokesRef.current]
+          .reverse()
+          .find((s) => pointNearStroke(s, tap.x, tap.y, 14 / camRef.current.k));
+        if (hit) sel.add(hit.id);
       }
       setHasSelection(sel.size > 0);
       requestDraw();
       return;
     }
+
+    // Finalize Marquee Box Selection
+    if (g.mode === "marquee") {
+      const marquee = marqueeRef.current;
+      marqueeRef.current = null;
+      const sel = selectionRef.current;
+      sel.clear();
+      if (marquee) {
+        const bw = Math.abs(marquee.x1 - marquee.x0);
+        const bh = Math.abs(marquee.y1 - marquee.y0);
+        if (bw > 4 / camRef.current.k || bh > 4 / camRef.current.k) {
+          for (const s of strokesRef.current) {
+            if (strokeInRect(s, marquee)) sel.add(s.id);
+          }
+        } else {
+          // Tap to select
+          const hit = [...strokesRef.current]
+            .reverse()
+            .find((s) => pointNearStroke(s, marquee.x0, marquee.y0, 14 / camRef.current.k));
+          if (hit) sel.add(hit.id);
+        }
+      }
+      setHasSelection(sel.size > 0);
+      requestDraw();
+      return;
+    }
+
     save();
   };
 
+  /* ---------------- Export Canvas Features ---------------- */
+  const exportImage = useCallback(
+    (format: "png" | "svg" | "json") => {
+      const strokes = strokesRef.current;
+      const css = getComputedStyle(document.documentElement);
+      const paper = css.getPropertyValue("--canvas-paper").trim() || "#ffffff";
+
+      if (format === "json") {
+        const dataStr =
+          "data:text/json;charset=utf-8," +
+          encodeURIComponent(
+            JSON.stringify(
+              {
+                title,
+                theme,
+                pattern,
+                strokes,
+                exportedAt: new Date().toISOString(),
+              },
+              null,
+              2,
+            ),
+          );
+        const a = document.createElement("a");
+        a.href = dataStr;
+        a.download = `${title.toLowerCase().replace(/\s+/g, "_") || "note"}.json`;
+        a.click();
+        return;
+      }
+
+      if (strokes.length === 0) {
+        alert("Canvas is empty. Draw something before exporting!");
+        return;
+      }
+
+      const bounds = computeGroupBounds(strokes);
+      const pad = 40;
+      const expW = Math.max(200, Math.round(bounds.w + pad * 2));
+      const expH = Math.max(200, Math.round(bounds.h + pad * 2));
+
+      if (format === "svg") {
+        const svgLines: string[] = [];
+        svgLines.push(
+          `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${bounds.x0 - pad} ${bounds.y0 - pad} ${expW} ${expH}" width="${expW}" height="${expH}">`,
+        );
+        svgLines.push(
+          `<rect x="${bounds.x0 - pad}" y="${bounds.y0 - pad}" width="${expW}" height="${expH}" fill="${paper}"/>`,
+        );
+        svgLines.push("<defs>");
+        strokes.forEach((s, idx) => {
+          if (s.brush.kind === "gradient") {
+            svgLines.push(
+              `<linearGradient id="exp-g-${idx}" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="${s.brush.from}"/><stop offset="100%" stop-color="${s.brush.to}"/></linearGradient>`,
+            );
+          }
+        });
+        svgLines.push("</defs>");
+
+        strokes.forEach((s, idx) => {
+          const strokeColor = s.brush.kind === "solid" ? s.brush.color : `url(#exp-g-${idx})`;
+          const ptsStr = s.pts.map((p) => `${p.x},${p.y}`).join(" ");
+          svgLines.push(
+            `<polyline points="${ptsStr}" fill="none" stroke="${strokeColor}" stroke-width="${s.width}" stroke-linecap="round" stroke-linejoin="round" opacity="${s.opacity ?? 1}"/>`,
+          );
+        });
+        svgLines.push("</svg>");
+
+        const blob = new Blob([svgLines.join("\n")], { type: "image/svg+xml" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${title.toLowerCase().replace(/\s+/g, "_") || "drawing"}.svg`;
+        a.click();
+        URL.revokeObjectURL(url);
+        return;
+      }
+
+      if (format === "png") {
+        const offCanvas = document.createElement("canvas");
+        const scale = 2; // high-dpi 2x export
+        offCanvas.width = expW * scale;
+        offCanvas.height = expH * scale;
+        const octx = offCanvas.getContext("2d");
+        if (!octx) return;
+
+        octx.scale(scale, scale);
+        octx.fillStyle = paper;
+        octx.fillRect(0, 0, expW, expH);
+
+        octx.translate(-(bounds.x0 - pad), -(bounds.y0 - pad));
+        octx.lineCap = "round";
+        octx.lineJoin = "round";
+
+        strokes.forEach((s) => {
+          octx.save();
+          if (s.style === "highlighter") {
+            octx.globalCompositeOperation = "multiply";
+            octx.globalAlpha = s.opacity ?? 0.4;
+            octx.lineWidth = s.width * 1.5;
+            octx.lineCap = "square";
+          } else {
+            octx.globalAlpha = s.opacity ?? 1;
+            octx.lineWidth = s.width;
+          }
+          octx.strokeStyle = brushStyle(octx, s);
+          const path = strokePath(s.pts);
+          octx.stroke(path);
+          octx.restore();
+        });
+
+        const url = offCanvas.toDataURL("image/png");
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${title.toLowerCase().replace(/\s+/g, "_") || "drawing"}.png`;
+        a.click();
+      }
+    },
+    [title, theme, pattern],
+  );
+
+  /* ---------------- Dynamic Cursor ---------------- */
   const cursor = useMemo(() => {
     if (tool === "hand") return "grab";
+    if (tool === "eraser") return "none"; // custom ring cursor rendered on canvas
     if (tool === "lasso") return "crosshair";
+    if (tool === "shape") return "crosshair";
     return "crosshair";
   }, [tool]);
 
   return (
-    <div className="relative h-dvh w-full overflow-hidden bg-background">
+    <div className="relative h-dvh w-full overflow-hidden bg-background select-none">
+      {/* Canvas Wrap */}
       <div
         ref={wrapRef}
-        className="absolute inset-0 touch-none select-none"
+        className="absolute inset-0 touch-none"
         style={{ cursor }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -610,102 +1587,71 @@ export function Board({ noteId }: { noteId: string }) {
         <canvas ref={canvasRef} className="h-full w-full" />
       </div>
 
+      {/* Redesigned Floating Toolbar & Controls */}
       <Toolbar
         title={title}
         onTitleChange={(t) => {
           setTitle(t);
           updateNote(noteId, { title: t });
         }}
+        isSaving={isSaving}
+        strokeCount={strokeCount}
         tool={tool}
         setTool={setTool}
-        brush={brush}
-        setBrush={setBrush}
-        size={size}
-        setSize={setSize}
-        penStyle={penStyle ?? "ink"}
-        setPenStyle={(style) => setPenStyle(style)}
-        opacity={opacity}
-        setOpacity={setOpacity}
-        straight={straight}
-        setStraight={setStraight}
+        penStyle={penStyle}
+        setPenStyle={setPenStyle}
         eraserMode={eraserMode}
         setEraserMode={setEraserMode}
+        eraserFilter={eraserFilter}
+        setEraserFilter={setEraserFilter}
         eraserSize={eraserSize}
         setEraserSize={setEraserSize}
         lassoMode={lassoMode}
         setLassoMode={setLassoMode}
+        shapeType={shapeType}
+        setShapeType={setShapeType}
+        autoSnapShape={autoSnapShape}
+        setAutoSnapShape={setAutoSnapShape}
+        brush={brush}
+        setBrush={setBrush}
+        size={size}
+        setSize={setSize}
+        opacity={opacity}
+        setOpacity={setOpacity}
         theme={theme}
         setTheme={setTheme}
+        pattern={pattern}
+        setPattern={setPattern}
         zoom={zoom}
-        onZoom={(factor) => {
-          const el = wrapRef.current;
-          if (!el) return;
-          zoomAt(el.clientWidth / 2, el.clientHeight / 2, factor);
-        }}
+        setZoomLevel={setZoomLevel}
         canUndo={canUndo}
         canRedo={canRedo}
-        selectionCount={hasSelection ? selectionRef.current.size : 0}
+        hasSelection={hasSelection}
         onUndo={() => jump(-1)}
         onRedo={() => jump(1)}
         onDeleteSelection={deleteSelection}
-        onDuplicateSelection={() => {
-          const selected = strokesRef.current.filter((s) => selectionRef.current.has(s.id));
-          const copies = selected.map((s) => ({ ...translateStroke(s, 18, 18), id: uid() }));
-          if (!copies.length) return;
-          selectionRef.current = new Set(copies.map((s) => s.id));
-          setHasSelection(true);
-          commit([...strokesRef.current, ...copies]);
-        }}
-        onBringFront={() => {
-          const selected = strokesRef.current.filter((s) => selectionRef.current.has(s.id));
-          if (selected.length)
-            commit([
-              ...strokesRef.current.filter((s) => !selectionRef.current.has(s.id)),
-              ...selected,
-            ]);
-        }}
-        onSendBack={() => {
-          const selected = strokesRef.current.filter((s) => selectionRef.current.has(s.id));
-          if (selected.length)
-            commit([
-              ...selected,
-              ...strokesRef.current.filter((s) => !selectionRef.current.has(s.id)),
-            ]);
-        }}
-        onRestyleSelection={() => {
-          if (!selectionRef.current.size) return;
-          commit(
-            strokesRef.current.map((s) =>
-              selectionRef.current.has(s.id) ? { ...s, brush, style: penStyle, opacity } : s,
-            ),
-          );
-        }}
-        onScaleSelection={(factor) => {
-          const selected = strokesRef.current.filter((s) => selectionRef.current.has(s.id));
-          if (!selected.length) return;
-          const x0 = Math.min(...selected.map((s) => s.bounds.x0));
-          const y0 = Math.min(...selected.map((s) => s.bounds.y0));
-          const x1 = Math.max(...selected.map((s) => s.bounds.x1));
-          const y1 = Math.max(...selected.map((s) => s.bounds.y1));
-          const cx = (x0 + x1) / 2,
-            cy = (y0 + y1) / 2;
-          commit(
-            strokesRef.current.map((s) =>
-              selectionRef.current.has(s.id) ? scaleStroke(s, cx, cy, factor) : s,
-            ),
-          );
-        }}
+        onDuplicateSelection={duplicateSelection}
+        onRecolorSelection={recolorSelection}
+        onThickenSelection={thickenSelection}
+        onFlipSelection={flipSelection}
+        onRotateSelection={rotateSelection}
+        onDeselect={deselect}
         onResetView={() => {
           camRef.current = { x: 0, y: 0, k: 1 };
           setZoom(1);
           save();
           requestDraw();
         }}
+        onFitView={fitView}
         onClear={() => {
-          selectionRef.current.clear();
-          setHasSelection(false);
-          commit([]);
+          if (strokesRef.current.length === 0) return;
+          if (confirm("Are you sure you want to clear the entire canvas?")) {
+            selectionRef.current.clear();
+            setHasSelection(false);
+            commit([]);
+          }
         }}
+        onExportImage={exportImage}
       />
     </div>
   );
