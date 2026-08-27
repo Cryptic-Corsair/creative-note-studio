@@ -172,7 +172,10 @@ function Home() {
         {notes === null ? (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {[0, 1, 2].map((i) => (
-              <div key={i} className="h-56 animate-pulse rounded-2xl border border-border bg-card" />
+              <div
+                key={i}
+                className="h-56 animate-pulse rounded-2xl border border-border bg-card"
+              />
             ))}
           </div>
         ) : filtered.length === 0 ? (

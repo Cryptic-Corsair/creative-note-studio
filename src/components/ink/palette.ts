@@ -25,9 +25,7 @@ export const GRADIENTS: { from: string; to: string; name: string }[] = [
 ];
 
 export function brushCss(b: Brush) {
-  return b.kind === "solid"
-    ? b.color
-    : `linear-gradient(135deg, ${b.from}, ${b.to})`;
+  return b.kind === "solid" ? b.color : `linear-gradient(135deg, ${b.from}, ${b.to})`;
 }
 
 export const THEMES = [

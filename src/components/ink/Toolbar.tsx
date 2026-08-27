@@ -223,7 +223,11 @@ export function Toolbar(p: Props) {
             <IconRedo />
           </IconButton>
           <span className="mx-0.5 h-5 w-px bg-panel-border" />
-          <IconButton label="Themes" active={panel === "theme"} onClick={() => setPanel(panel === "theme" ? null : "theme")}>
+          <IconButton
+            label="Themes"
+            active={panel === "theme"}
+            onClick={() => setPanel(panel === "theme" ? null : "theme")}
+          >
             <IconSparkle />
           </IconButton>
           <IconButton label="Clear canvas" danger onClick={p.onClear}>
@@ -371,7 +375,11 @@ export function Toolbar(p: Props) {
               >
                 <IconStraight size={18} />
               </IconButton>
-              <IconButton label="Ink settings" active={panel === "ink"} onClick={() => setPanel(panel === "ink" ? null : "ink")}>
+              <IconButton
+                label="Ink settings"
+                active={panel === "ink"}
+                onClick={() => setPanel(panel === "ink" ? null : "ink")}
+              >
                 <IconPalette size={18} />
               </IconButton>
             </>
@@ -468,7 +476,9 @@ export function Toolbar(p: Props) {
                   <div className="grid grid-cols-6 gap-2">
                     {GRADIENTS.map((g) => {
                       const active =
-                        p.brush.kind === "gradient" && p.brush.from === g.from && p.brush.to === g.to;
+                        p.brush.kind === "gradient" &&
+                        p.brush.from === g.from &&
+                        p.brush.to === g.to;
                       return (
                         <button
                           key={g.name}
@@ -510,7 +520,9 @@ export function Toolbar(p: Props) {
                       className="h-8 w-8 cursor-pointer rounded-lg border border-panel-border bg-transparent p-0"
                     />
                     <button
-                      onClick={() => p.setBrush({ kind: "gradient", from: customFrom, to: customTo })}
+                      onClick={() =>
+                        p.setBrush({ kind: "gradient", from: customFrom, to: customTo })
+                      }
                       className="rounded-lg bg-panel-foreground px-3 py-2 text-xs font-medium text-panel transition-opacity hover:opacity-85"
                     >
                       Use
@@ -518,7 +530,14 @@ export function Toolbar(p: Props) {
                   </div>
                 </div>
 
-                <Slider label="Thickness" value={p.size} min={1} max={40} step={0.5} onChange={p.setSize} />
+                <Slider
+                  label="Thickness"
+                  value={p.size}
+                  min={1}
+                  max={40}
+                  step={0.5}
+                  onChange={p.setSize}
+                />
                 <Slider
                   label="Opacity"
                   value={p.opacity * 100}

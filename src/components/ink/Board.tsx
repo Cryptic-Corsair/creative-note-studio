@@ -6,18 +6,22 @@ import {
   MAX_ZOOM,
   MIN_ZOOM,
   pointNearStroke,
+  renderStroke,
   shouldAddPoint,
+  splitStrokeByEraser,
+  scaleStroke,
   strokeInLasso,
-  strokePath,
+  straighten,
   toWorld,
   translateStroke,
   uid,
   type Brush,
   type Camera,
+  type PenStyle,
   type Pt,
   type Stroke,
 } from "@/lib/ink";
-import { Toolbar, type Tool } from "./Toolbar";
+import { Toolbar, type EraserMode, type LassoMode, type Tool } from "./Toolbar";
 import { THEMES, type ThemeId } from "./palette";
 import { getNote, updateNote } from "@/lib/notes";
 
@@ -49,6 +53,12 @@ export function Board({ noteId }: { noteId: string }) {
   const [tool, setTool] = useState<Tool>("pen");
   const [brush, setBrush] = useState<Brush>({ kind: "solid", color: "#111318" });
   const [size, setSize] = useState(4);
+  const [penStyle, setPenStyle] = useState<PenStyle>("ink");
+  const [opacity, setOpacity] = useState(1);
+  const [straight, setStraight] = useState(false);
+  const [eraserMode, setEraserMode] = useState<EraserMode>("stroke");
+  const [eraserSize, setEraserSize] = useState(18);
+  const [lassoMode, setLassoMode] = useState<LassoMode>("free");
   const [theme, setTheme] = useState<ThemeId>("graphite");
   const [title, setTitle] = useState("Untitled note");
   const [zoom, setZoom] = useState(1);
@@ -59,9 +69,17 @@ export function Board({ noteId }: { noteId: string }) {
   const toolRef = useRef(tool);
   const brushRef = useRef(brush);
   const sizeRef = useRef(size);
+  const penStyleRef = useRef(penStyle);
+  const opacityRef = useRef(opacity);
+  const eraserModeRef = useRef(eraserMode);
+  const eraserSizeRef = useRef(eraserSize);
   toolRef.current = tool;
   brushRef.current = brush;
   sizeRef.current = size;
+  penStyleRef.current = penStyle;
+  opacityRef.current = opacity;
+  eraserModeRef.current = eraserMode;
+  eraserSizeRef.current = eraserSize;
 
   /* ---------------- rendering ---------------- */
   const requestDraw = useCallback(() => {
@@ -124,16 +142,18 @@ export function Board({ noteId }: { noteId: string }) {
       const pad = s.width;
       if (b.x1 + pad < viewX0 || b.x0 - pad > viewX1 || b.y1 + pad < viewY0 || b.y0 - pad > viewY1)
         return;
-      ctx.strokeStyle = brushStyle(ctx, s);
-      ctx.lineWidth = s.width;
-      ctx.globalAlpha = 1;
-      ctx.stroke(strokePath(s.pts));
+      renderStroke(ctx, s);
       if (selected) {
         ctx.save();
         ctx.globalAlpha = 0.35;
         ctx.strokeStyle = accent;
         ctx.lineWidth = s.width + 6 / cam.k;
-        ctx.stroke(strokePath(s.pts));
+        renderStroke(ctx, {
+          ...s,
+          brush: { kind: "solid", color: accent },
+          opacity: 0.35,
+          width: s.width + 6 / cam.k,
+        });
         ctx.restore();
       }
     };
@@ -329,10 +349,16 @@ export function Board({ noteId }: { noteId: string }) {
   };
 
   const eraseAt = (wx: number, wy: number) => {
-    const r = Math.max(6, sizeRef.current * 2) / camRef.current.k;
-    const kept = strokesRef.current.filter((s) => !pointNearStroke(s, wx, wy, r));
-    if (kept.length !== strokesRef.current.length) {
-      strokesRef.current = kept;
+    const r = eraserSizeRef.current / camRef.current.k;
+    const next =
+      eraserModeRef.current === "stroke"
+        ? strokesRef.current.filter((s) => !pointNearStroke(s, wx, wy, r))
+        : strokesRef.current.flatMap((s) => splitStrokeByEraser(s, wx, wy, r));
+    if (
+      next.length !== strokesRef.current.length ||
+      next.some((s, i) => s !== strokesRef.current[i])
+    ) {
+      strokesRef.current = next;
       requestDraw();
     }
   };
@@ -403,6 +429,8 @@ export function Board({ noteId }: { noteId: string }) {
       pts: [{ x: world.x, y: world.y, p: pressure }],
       width: sizeRef.current * (0.75 + pressure * 0.5),
       brush: brushRef.current,
+      style: penStyleRef.current,
+      opacity: opacityRef.current,
       bounds: { x0: world.x, y0: world.y, x1: world.x, y1: world.y },
     };
     gestureRef.current = { mode: "draw", id: e.pointerId };
@@ -458,6 +486,17 @@ export function Board({ noteId }: { noteId: string }) {
     if (g.mode === "lasso") {
       const poly = lassoRef.current;
       if (!poly) return;
+      if (lassoMode === "rect") {
+        const start = poly[0]!;
+        lassoRef.current = [
+          start,
+          { x: world.x, y: start.y, p: 1 },
+          { x: world.x, y: world.y, p: 1 },
+          { x: start.x, y: world.y, p: 1 },
+        ];
+        requestDraw();
+        return;
+      }
       const last = poly[poly.length - 1];
       if (shouldAddPoint(last, { x: world.x, y: world.y, p: 1 }, 3 / camRef.current.k)) {
         poly.push({ x: world.x, y: world.y, p: 1 });
@@ -523,6 +562,7 @@ export function Board({ noteId }: { noteId: string }) {
       const live = liveRef.current;
       liveRef.current = null;
       if (live && live.pts.length > 0) {
+        if (straight) live.pts = straighten(live.pts, true);
         live.bounds = computeBounds(live.pts);
         commit([...strokesRef.current, live]);
       } else {
@@ -582,15 +622,79 @@ export function Board({ noteId }: { noteId: string }) {
         setBrush={setBrush}
         size={size}
         setSize={setSize}
+        penStyle={penStyle ?? "ink"}
+        setPenStyle={(style) => setPenStyle(style)}
+        opacity={opacity}
+        setOpacity={setOpacity}
+        straight={straight}
+        setStraight={setStraight}
+        eraserMode={eraserMode}
+        setEraserMode={setEraserMode}
+        eraserSize={eraserSize}
+        setEraserSize={setEraserSize}
+        lassoMode={lassoMode}
+        setLassoMode={setLassoMode}
         theme={theme}
         setTheme={setTheme}
         zoom={zoom}
+        onZoom={(factor) => {
+          const el = wrapRef.current;
+          if (!el) return;
+          zoomAt(el.clientWidth / 2, el.clientHeight / 2, factor);
+        }}
         canUndo={canUndo}
         canRedo={canRedo}
-        hasSelection={hasSelection}
+        selectionCount={hasSelection ? selectionRef.current.size : 0}
         onUndo={() => jump(-1)}
         onRedo={() => jump(1)}
         onDeleteSelection={deleteSelection}
+        onDuplicateSelection={() => {
+          const selected = strokesRef.current.filter((s) => selectionRef.current.has(s.id));
+          const copies = selected.map((s) => ({ ...translateStroke(s, 18, 18), id: uid() }));
+          if (!copies.length) return;
+          selectionRef.current = new Set(copies.map((s) => s.id));
+          setHasSelection(true);
+          commit([...strokesRef.current, ...copies]);
+        }}
+        onBringFront={() => {
+          const selected = strokesRef.current.filter((s) => selectionRef.current.has(s.id));
+          if (selected.length)
+            commit([
+              ...strokesRef.current.filter((s) => !selectionRef.current.has(s.id)),
+              ...selected,
+            ]);
+        }}
+        onSendBack={() => {
+          const selected = strokesRef.current.filter((s) => selectionRef.current.has(s.id));
+          if (selected.length)
+            commit([
+              ...selected,
+              ...strokesRef.current.filter((s) => !selectionRef.current.has(s.id)),
+            ]);
+        }}
+        onRestyleSelection={() => {
+          if (!selectionRef.current.size) return;
+          commit(
+            strokesRef.current.map((s) =>
+              selectionRef.current.has(s.id) ? { ...s, brush, style: penStyle, opacity } : s,
+            ),
+          );
+        }}
+        onScaleSelection={(factor) => {
+          const selected = strokesRef.current.filter((s) => selectionRef.current.has(s.id));
+          if (!selected.length) return;
+          const x0 = Math.min(...selected.map((s) => s.bounds.x0));
+          const y0 = Math.min(...selected.map((s) => s.bounds.y0));
+          const x1 = Math.max(...selected.map((s) => s.bounds.x1));
+          const y1 = Math.max(...selected.map((s) => s.bounds.y1));
+          const cx = (x0 + x1) / 2,
+            cy = (y0 + y1) / 2;
+          commit(
+            strokesRef.current.map((s) =>
+              selectionRef.current.has(s.id) ? scaleStroke(s, cx, cy, factor) : s,
+            ),
+          );
+        }}
         onResetView={() => {
           camRef.current = { x: 0, y: 0, k: 1 };
           setZoom(1);
