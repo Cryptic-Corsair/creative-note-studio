@@ -361,6 +361,18 @@ body {
   overscroll-behavior: none;
 }
 
+html {
+  font-size: calc(16px * var(--ui-scale, 1));
+}
+
+[data-motion="reduced"] *,
+[data-motion="reduced"] *::before,
+[data-motion="reduced"] *::after {
+  animation-duration: 0.01ms !important;
+  transition-duration: 0.01ms !important;
+}
+
+
 @layer base {
   * {
     border-color: var(--color-border);
