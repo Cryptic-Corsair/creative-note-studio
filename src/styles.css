@@ -64,8 +64,9 @@
   --color-panel-accent: var(--panel-accent);
   --color-panel-border: var(--panel-border);
   --color-panel-ring: var(--panel-ring);
-  --font-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-display-user, "Space Grotesk", ui-sans-serif, system-ui, sans-serif);
   --font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+
   --shadow-float: 0 12px 30px -14px var(--shadow-tint);
   --shadow-inset-soft: inset 0 0 0 1px var(--panel-border);
 }
