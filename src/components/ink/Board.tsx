@@ -52,6 +52,42 @@ const getCachedPath = (s: Stroke, isLive: boolean) => {
   return p;
 };
 
+/**
+ * Paint a stroke with a width that follows the pressure captured from a stylus.
+ * Canvas' `lineWidth` is constant for a single path, so the stroke is rendered
+ * as short, overlapping segments. This keeps pencil lines responsive without
+ * turning a quick note into hundreds of separate persisted strokes.
+ */
+function paintPressureStroke(ctx: CanvasRenderingContext2D, s: Stroke) {
+  const pts = s.pts;
+  if (pts.length === 0) return;
+  const widthFor = (p: Pt) => s.width * (0.42 + clamp(p.p || 0.7, 0.1, 1) * 0.88);
+
+  if (pts.length === 1) {
+    ctx.beginPath();
+    ctx.arc(pts[0]!.x, pts[0]!.y, widthFor(pts[0]!) / 2, 0, Math.PI * 2);
+    ctx.fillStyle = brushStyle(ctx, s);
+    ctx.fill();
+    return;
+  }
+
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1]!;
+    const b = pts[i]!;
+    const distance = Math.hypot(b.x - a.x, b.y - a.y);
+    const steps = Math.max(1, Math.ceil(distance / Math.max(1.5, s.width * 0.55)));
+    for (let j = 0; j < steps; j++) {
+      const t0 = j / steps;
+      const t1 = (j + 1) / steps;
+      ctx.lineWidth = widthFor({ x: 0, y: 0, p: a.p + (b.p - a.p) * ((t0 + t1) / 2) });
+      ctx.beginPath();
+      ctx.moveTo(a.x + (b.x - a.x) * t0, a.y + (b.y - a.y) * t0);
+      ctx.lineTo(a.x + (b.x - a.x) * t1, a.y + (b.y - a.y) * t1);
+      ctx.stroke();
+    }
+  }
+}
+
 export function Board({ noteId }: { noteId: string }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -367,6 +403,10 @@ export function Board({ noteId }: { noteId: string }) {
           ctx.fill();
         }
         ctx.restore();
+      } else if (s.style === "pen" || s.style === "brush") {
+        // Native pressure is preserved in every point so a light pencil-like
+        // stroke and a deliberate, heavy stroke feel meaningfully different.
+        paintPressureStroke(ctx, s);
       } else {
         const path = getCachedPath(s, isLive);
         ctx.stroke(path);
@@ -1062,7 +1102,10 @@ export function Board({ noteId }: { noteId: string }) {
     liveRef.current = {
       id: uid(),
       pts: [{ x: world.x, y: world.y, p: pressure }],
-      width: sizeRef.current * (style === "highlighter" ? 1.5 : 0.75 + pressure * 0.5),
+      // Keep width as the user's selected base size. Pressure is applied while
+      // rendering each segment, rather than baking the first sample into every
+      // point in the stroke.
+      width: sizeRef.current * (style === "highlighter" ? 1.5 : 1),
       brush: brushRef.current,
       style,
       opacity: opacityRef.current,
@@ -1547,8 +1590,13 @@ export function Board({ noteId }: { noteId: string }) {
             octx.lineWidth = s.width;
           }
           octx.strokeStyle = brushStyle(octx, s);
-          const path = strokePath(s.pts);
-          octx.stroke(path);
+          if (s.style === "pen" || s.style === "brush") {
+            // Keep exported PNGs faithful to the pressure-aware on-canvas ink.
+            paintPressureStroke(octx, s);
+          } else {
+            const path = strokePath(s.pts);
+            octx.stroke(path);
+          }
           octx.restore();
         });
 

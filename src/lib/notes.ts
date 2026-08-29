@@ -82,7 +82,11 @@ export function getNote(id: string): Note | null {
   return safeRead().find((n) => n.id === id) ?? null;
 }
 
-export function createNote(title = "Untitled note", theme: ThemeId = "graphite"): Note {
+export function createNote(
+  title = "Untitled note",
+  theme: ThemeId = "graphite",
+  pattern?: PaperPatternId,
+): Note {
   const note: Note = {
     id: uid(),
     title,
@@ -90,6 +94,7 @@ export function createNote(title = "Untitled note", theme: ThemeId = "graphite")
     updatedAt: Date.now(),
     favorite: false,
     theme,
+    pattern,
     cam: { x: 0, y: 0, k: 1 },
     strokes: [],
   };

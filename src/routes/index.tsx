@@ -11,7 +11,7 @@ import {
   type NoteMeta,
 } from "@/lib/notes";
 import { NoteThumb } from "@/components/ink/NoteThumb";
-import { THEMES, GRADIENTS, type ThemeId } from "@/components/ink/palette";
+import { THEMES, GRADIENTS, type ThemeId, type PaperPatternId } from "@/components/ink/palette";
 import {
   MarkArchive,
   MarkDuplicate,
@@ -72,6 +72,40 @@ const SORTS: { id: SortKey; label: string }[] = [
   { id: "size", label: "Strokes" },
 ];
 
+const NOTE_TEMPLATES: {
+  title: string;
+  eyebrow: string;
+  description: string;
+  theme: ThemeId;
+  pattern: PaperPatternId;
+  accent: string;
+}[] = [
+  {
+    title: "Meeting note",
+    eyebrow: "Stay present",
+    description: "A ruled page for decisions, actions and loose thoughts.",
+    theme: "paper",
+    pattern: "ruled",
+    accent: "#e1b76b",
+  },
+  {
+    title: "Study map",
+    eyebrow: "Connect the dots",
+    description: "A graph canvas for concepts, sketches and working it out.",
+    theme: "sage",
+    pattern: "graph",
+    accent: "#78a998",
+  },
+  {
+    title: "Project sketch",
+    eyebrow: "See the system",
+    description: "An isometric surface for flows, plans and diagrams.",
+    theme: "midnight",
+    pattern: "isometric",
+    accent: "#78bce0",
+  },
+];
+
 function Home() {
   const navigate = useNavigate();
   const searchRef = useRef<HTMLInputElement>(null);
@@ -130,8 +164,13 @@ function Home() {
     };
   }, [notes]);
 
-  const newNote = (t: ThemeId = theme) => {
-    const n = createNote("Untitled note", t);
+  const recentNote = useMemo(
+    () => (notes ?? []).slice().sort((a, b) => b.updatedAt - a.updatedAt)[0],
+    [notes],
+  );
+
+  const newNote = (t: ThemeId = theme, title = "Untitled note", pattern?: PaperPatternId) => {
+    const n = createNote(title, t, pattern);
     navigate({ to: "/note/$id", params: { id: n.id } });
   };
 
@@ -209,7 +248,7 @@ function Home() {
 
       <main className="relative mx-auto max-w-6xl px-4 pb-24 pt-8 sm:px-6">
         {/* Hero */}
-        <section className="relative mb-10 overflow-hidden rounded-[28px] border border-border bg-card p-6 shadow-float sm:p-10">
+        <section className="relative mb-6 overflow-hidden rounded-[32px] border border-border bg-card p-6 shadow-float sm:p-10">
           <div
             aria-hidden
             className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full opacity-25 blur-2xl"
@@ -220,22 +259,22 @@ function Home() {
           <div className="relative grid gap-8 lg:grid-cols-[1.15fr_1fr] lg:items-center">
             <div>
               <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background/60 px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-                <MarkSpark className="h-3.5 w-3.5" /> pressure ink engine
+                <MarkSpark className="h-3.5 w-3.5" /> your thinking space
               </span>
               <h2 className="mt-4 max-w-xl font-display text-3xl leading-[1.08] tracking-tight sm:text-5xl">
-                Handwriting that feels like paper,
-                <span className="text-muted-foreground"> on a canvas without edges.</span>
+                Make room for the ideas
+                <span className="text-muted-foreground"> that don&apos;t fit in a box.</span>
               </h2>
               <p className="mt-4 max-w-lg text-sm text-muted-foreground sm:text-base">
-                Pressure-aware pens, precision eraser, lasso transforms, shape snapping and custom
-                gradient inks. Everything saves as you write.
+                A paper-like canvas for notes, diagrams and fast visual thinking. Every mark is
+                pressure-responsive, instantly saved, and ready to pick up again.
               </p>
               <div className="mt-6 flex flex-wrap items-center gap-2">
                 <button
                   onClick={() => newNote()}
                   className="inline-flex h-11 items-center gap-2 rounded-2xl bg-primary px-5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
                 >
-                  <MarkNib className="h-4 w-4" /> Start writing
+                  <MarkNib className="h-4 w-4" /> Open a blank canvas
                 </button>
                 <div className="flex items-center gap-4 rounded-2xl border border-border px-4 py-2.5 text-xs text-muted-foreground">
                   <Stat label="notes" value={stats.count} />
@@ -249,9 +288,10 @@ function Home() {
 
             {/* Theme quick-start shelf */}
             <div>
-              <p className="mb-3 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-                Start on a paper
-              </p>
+              <div className="mb-3 flex items-center justify-between text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                <p>Choose your paper</p>
+                <span className="normal-case tracking-normal">double click to start</span>
+              </div>
               <div className="grid grid-cols-3 gap-2.5">
                 {THEMES.map((t) => (
                   <button
@@ -270,8 +310,7 @@ function Home() {
                       className="block h-14 w-full"
                       style={{
                         background: "var(--canvas-paper)",
-                        backgroundImage:
-                          "radial-gradient(currentColor 0.7px, transparent 0.7px)",
+                        backgroundImage: "radial-gradient(currentColor 0.7px, transparent 0.7px)",
                         backgroundSize: "9px 9px",
                         color: "var(--canvas-grid, transparent)",
                       }}
@@ -283,6 +322,112 @@ function Home() {
                 ))}
               </div>
             </div>
+          </div>
+        </section>
+
+        <section className="mb-6 grid gap-3 md:grid-cols-[1.35fr_1fr]">
+          {recentNote ? (
+            <Link
+              to="/note/$id"
+              params={{ id: recentNote.id }}
+              className="group relative overflow-hidden rounded-3xl border border-border bg-card p-5 transition-all hover:-translate-y-0.5 hover:shadow-float"
+            >
+              <div
+                className="absolute inset-y-0 right-0 w-2/5 opacity-70"
+                data-theme={recentNote.theme}
+                style={{ background: "var(--canvas-paper)" }}
+              />
+              <div className="relative max-w-[62%]">
+                <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                  Continue thinking
+                </p>
+                <h3 className="mt-2 truncate font-display text-xl">
+                  {recentNote.title || "Untitled note"}
+                </h3>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Edited {fmt(recentNote.updatedAt)} · {recentNote.strokeCount} marks
+                </p>
+                <span className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-primary">
+                  Resume canvas <span aria-hidden>→</span>
+                </span>
+              </div>
+            </Link>
+          ) : (
+            <button
+              onClick={() => newNote()}
+              className="rounded-3xl border border-dashed border-border bg-card p-5 text-left transition-colors hover:bg-accent/40"
+            >
+              <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                First thought
+              </p>
+              <h3 className="mt-2 font-display text-xl">Start where your mind is.</h3>
+              <p className="mt-1 text-xs text-muted-foreground">
+                A blank, endless page is one click away.
+              </p>
+            </button>
+          )}
+          <div className="rounded-3xl border border-border bg-card p-5">
+            <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+              Built for flow
+            </p>
+            <div className="mt-3 grid grid-cols-3 gap-2 text-center text-[11px] text-muted-foreground">
+              <div className="rounded-2xl bg-accent/55 px-2 py-3">
+                <b className="mb-1 block text-sm text-foreground">∞</b>Canvas
+              </div>
+              <div className="rounded-2xl bg-accent/55 px-2 py-3">
+                <b className="mb-1 block text-sm text-foreground">⌁</b>Pressure
+              </div>
+              <div className="rounded-2xl bg-accent/55 px-2 py-3">
+                <b className="mb-1 block text-sm text-foreground">↗</b>Shapes
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="mb-10 rounded-[30px] border border-border bg-card p-5 sm:p-6">
+          <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                Start with a shape
+              </p>
+              <h3 className="mt-1 font-display text-2xl tracking-tight">
+                A page for the way you work.
+              </h3>
+            </div>
+            <p className="max-w-xs text-sm text-muted-foreground">
+              Templates set the paper up front — the canvas stays entirely yours.
+            </p>
+          </div>
+          <div className="grid gap-3 md:grid-cols-3">
+            {NOTE_TEMPLATES.map((template) => (
+              <button
+                key={template.title}
+                onClick={() =>
+                  newNote(
+                    template.theme,
+                    `${template.title} — ${new Date().toLocaleDateString()}`,
+                    template.pattern,
+                  )
+                }
+                className="group relative min-h-44 overflow-hidden rounded-2xl border border-border p-4 text-left transition-all hover:-translate-y-1 hover:shadow-float"
+                style={{
+                  background: `linear-gradient(135deg, ${template.accent}26, transparent 64%)`,
+                }}
+              >
+                <span className="text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                  {template.eyebrow}
+                </span>
+                <span className="mt-6 block font-display text-xl tracking-tight">
+                  {template.title}
+                </span>
+                <span className="mt-1 block max-w-[14rem] text-xs leading-relaxed text-muted-foreground">
+                  {template.description}
+                </span>
+                <span className="absolute bottom-4 right-4 grid h-8 w-8 place-items-center rounded-full bg-background/80 text-primary opacity-0 transition-all group-hover:opacity-100">
+                  <MarkPlus className="h-4 w-4" />
+                </span>
+              </button>
+            ))}
           </div>
         </section>
 
@@ -350,7 +495,10 @@ function Home() {
         {notes === null ? (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {[0, 1, 2].map((i) => (
-              <div key={i} className="h-60 animate-pulse rounded-3xl border border-border bg-card" />
+              <div
+                key={i}
+                className="h-60 animate-pulse rounded-3xl border border-border bg-card"
+              />
             ))}
           </div>
         ) : filtered.length === 0 ? (
